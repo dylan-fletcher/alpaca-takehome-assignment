@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# dbt
+target/
+dbt_packages/
+logs/
+
+# dataset (not submitted per assignment instructions)
+*.csv
+*.zip
+*.parquet
+data/
+
+# assignment brief - not ours to redistribute
+*.pdf
+
+# dbt local anonymous-usage id (per-machine, not shared)
+.user.yml

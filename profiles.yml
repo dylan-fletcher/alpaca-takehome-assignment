@@ -1,0 +1,12 @@
+btc_backtest:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('PGHOST', 'localhost') }}"
+      port: "{{ env_var('PGPORT', '5432') | int }}"
+      user: "{{ env_var('PGUSER', 'dbt') }}"
+      password: "{{ env_var('PGPASSWORD', 'dbt') }}"
+      dbname: "{{ env_var('PGDATABASE', 'bitcoin') }}"
+      schema: analytics
+      threads: 4

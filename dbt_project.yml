@@ -1,0 +1,27 @@
+name: btc_backtest
+version: "1.0.0"
+profile: btc_backtest
+
+model-paths: ["models"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  btc_backtest:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+    facts:
+      +materialized: table
+      +schema: facts
+
+vars:
+  # Overridable at run time:  dbt build --vars '{trade_hour: 15}'
+  trade_hour: null          # null = evaluate all 24 hours
+  initial_units: 1
