@@ -11,14 +11,14 @@ sources:
   - name: binance
     description: >
       Raw Binance spot-market data, landed by `./run.sh` via a server-side COPY
-      from the Kaggle CSV export. The landing table is UNLOGGED and rebuilt from
-      the file on every `--reload`, so it is reproducible rather than durable.
+      from the Kaggle CSV export. The landing table persists on a named Docker
+      volume and is rebuilt from the file only on `--reload`.
 
       Provenance: "Binance Bitcoin Dataset 1 Second - Part 2" (Kaggle, user
       tzelal, CC0), itself collected from https://data.binance.vision/ and
       merged. Part 2 covers 2021-02-23 to 2024-08-27; Part 1 holds 2017-08-17
       onward and is not loaded here. Column semantics follow the dataset
-      description and the Binance kline API, verified against the loaded rows --
+      description and Binance's `/klines` API, verified against the loaded rows --
       see README.md for where the two disagree.
     schema: raw
 
@@ -29,8 +29,9 @@ sources:
     tables:
       - name: btc_1s
         description: >
-          One row per second of BTCUSDT trading, in Binance kline (candlestick)
-          format. Column names and order match the CSV header as exported; all
+          One row per second of BTCUSDT trading: open, high, low and close
+          price plus volume for that second, as served by Binance's `/klines`
+          endpoint. Column names and order match the CSV header as exported; all
           timestamps are UTC. Tests here run against the *raw* file, so the
           known defects are set to `warn` -- they document the state of the
           source rather than gating the build. The staging model below fixes
@@ -45,7 +46,7 @@ sources:
                     severity: warn
                     # 56 known duplicated timestamps (252 spurious rows) from
                     # overlapping archive windows upstream. Deduplicated in
-                    # stg_binance__btcusdt_1s_klines; see README.md.
+                    # stg_binance__btcusdt_1s_ohlcv; see README.md.
 
           - name: open
             description: First trade price in the interval, in USDT.
@@ -87,10 +88,11 @@ sources:
 # ----------------------------------------------------------------- models ---
 
 models:
-  - name: stg_binance__btcusdt_1s_klines
+  - name: stg_binance__btcusdt_1s_ohlcv
     description: >
-      One row per second of BTCUSDT trading on Binance spot, in kline
-      (candlestick) form. Grain: one row per `bar_open_at`, enforced by the
+      One row per second of BTCUSDT trading on Binance spot: the open, high,
+      low and close prices for that second plus the volume traded (README.md
+      defines these). Grain: one row per `open_time`, enforced by the
       unique test below. All timestamps are UTC and intentionally naive -- see
       the model SQL for why. Byte-identical duplicate rows present in the source
       are removed here.
@@ -99,7 +101,7 @@ models:
       # One combined expression rather than four separate ones: each test is a
       # full pass over 110M rows, and these fail for the same underlying reason.
       - dbt_utils.expression_is_true:
-          name: stg_binance__btcusdt_1s_klines_ohlc_bounds_coherent
+          name: stg_binance__btcusdt_1s_ohlcv_ohlc_bounds_coherent
           arguments:
             expression: >
               high_price >= low_price
@@ -107,17 +109,17 @@ models:
               and low_price <= least(open_price, close_price)
 
       - dbt_utils.expression_is_true:
-          name: stg_binance__btcusdt_1s_klines_taker_volume_within_total
+          name: stg_binance__btcusdt_1s_ohlcv_taker_volume_within_total
           arguments:
             expression: >
               taker_buy_base_volume <= base_volume
               and taker_buy_quote_volume <= quote_volume
 
     columns:
-      - name: bar_open_at
+      - name: open_time
         description: >
-          Start of the 1-second interval (UTC). The primary key: exactly one bar
-          per second after deduplication.
+          Start of the 1-second interval (UTC). The primary key: exactly one
+          row per second after deduplication.
         data_tests:
           - unique
           - not_null
@@ -135,10 +137,10 @@ models:
               config:
                 severity: warn
 
-      - name: bar_close_at
+      - name: close_time
         description: >
           End of the 1-second interval (UTC), normally 999ms after
-          `bar_open_at`. Four rows close early; see the source docs above.
+          `open_time`. Four rows close early; see the source docs above.
 
       - name: open_price
         description: First trade price in the interval, in USDT.

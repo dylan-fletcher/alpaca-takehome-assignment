@@ -40,7 +40,7 @@ dev-only, `uv remove <package>` to drop one). It updates `pyproject.toml` and
 ./query.sh                                      # interactive prompt
 
 uv run -- dbt build                                        # all models + tests
-uv run -- dbt build --select stg_binance__btcusdt_1s_klines # one model and its tests
+uv run -- dbt build --select stg_binance__btcusdt_1s_ohlcv # one model and its tests
 uv run -- dbt test  --select source:binance                 # source tests only
 uv run -- dbt parse                                         # validate YAML without touching the DB
 uv run -- dbt deps                                          # after editing packages.yml
@@ -54,7 +54,8 @@ uv run -- sqlfluff fix .                     # auto-fix what is safely fixable
 `./run.sh` and `./query.sh` are deliberately thin bash shims that locate `uv`
 and exec the matching `.py`. Put logic in the Python, not the shim.
 
-A full load takes ~7 minutes for 110.7M rows. Generate a fixture with
+A full load takes ~10 minutes for 110.7M rows, and only happens once --
+`run.py` skips it when the table is already populated. Generate a fixture with
 `head -n 200001 half2_BTCUSDT_1s.csv > fixture.csv` and use `--csv` while
 iterating. Note `*.csv` is gitignored, so the dataset and fixture are never
 committed.
@@ -139,9 +140,11 @@ backslash meta-commands and expands `:'var'` placeholders, which is what keeps
 `psql -f /sql/load.sql` inside the container. Preserve that dual-compatibility.
 
 **`raw` is a faithful mirror; `staging` is where cleaning happens.**
-`raw.btc_1s` is a byte-for-byte transcription of the CSV, `UNLOGGED` and
-rebuilt by `DROP TABLE` + `COPY` on every `--reload`. Data defects are
-corrected in the staging model, never in the load.
+`raw.btc_1s` is a byte-for-byte transcription of the CSV, rebuilt by
+`DROP TABLE ... CASCADE` + `COPY` on every `--reload`. It is a logged table on
+a persistent volume, so the load survives restarts and `run.py` skips it when
+rows are already present. Data defects are corrected in the staging model,
+never in the load.
 
 **Test severities encode intent.** Source tests run at `warn` and describe the
 file as it arrives (known upstream defects, surfaced but not blocking). Staging
@@ -281,3 +284,6 @@ Each entry below is a failure already paid for once:
   13.6 GB and gitignored.
 - **GitHub Actions does not clone for you.** Unlike GitLab CI, every job needs
   an explicit `actions/checkout` step first.
+- **`drop table raw.btc_1s` needs `cascade` once dbt has run.** The staging
+  view depends on it, so a bare drop fails with `DependentObjectsStillExist`
+  mid-`--reload`. The next `dbt build` recreates the view.
