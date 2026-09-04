@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Thin shim so `./run.sh` stays the entrypoint. The logic lives in run.py.
+# Thin shim so `./query.sh` stays the entrypoint. The logic lives in query.py.
 #
 # uv resolves and syncs the environment from pyproject.toml / uv.lock on every
 # invocation, so there is no venv to activate and no dependency drift.
@@ -15,4 +15,4 @@ command -v uv >/dev/null || {
   exit 1
 }
 
-exec uv run -- python run.py "$@"
+exec uv run -- python query.py "$@"
