@@ -1,0 +1,175 @@
+# One properties file for the whole Binance staging area: the source that lands
+# the raw file and the staging model built on top of it. Keeping them together
+# means a column's definition, its source-level caveats and its downstream tests
+# are all visible in one place.
+
+version: 2
+
+# ---------------------------------------------------------------- sources ---
+
+sources:
+  - name: binance
+    description: >
+      Raw Binance spot-market data, landed by `./run.sh` via a server-side COPY
+      from the Kaggle CSV export. The landing table is UNLOGGED and rebuilt from
+      the file on every `--reload`, so it is reproducible rather than durable.
+
+      Provenance: "Binance Bitcoin Dataset 1 Second - Part 2" (Kaggle, user
+      tzelal, CC0), itself collected from https://data.binance.vision/ and
+      merged. Part 2 covers 2021-02-23 to 2024-08-27; Part 1 holds 2017-08-17
+      onward and is not loaded here. Column semantics follow the dataset
+      description and the Binance kline API, verified against the loaded rows --
+      see README.md for where the two disagree.
+    schema: raw
+
+    # No `freshness:` block on purpose. Freshness asserts that new data is still
+    # arriving, but this is a fixed historical export with a known end date --
+    # a freshness check here would fail permanently by design.
+
+    tables:
+      - name: btc_1s
+        description: >
+          One row per second of BTCUSDT trading, in Binance kline (candlestick)
+          format. Column names and order match the CSV header as exported; all
+          timestamps are UTC. Tests here run against the *raw* file, so the
+          known defects are set to `warn` -- they document the state of the
+          source rather than gating the build. The staging model below fixes
+          them and tests at `error`.
+        columns:
+          - name: open_time
+            description: Start of the 1-second interval (UTC). Intended grain.
+            data_tests:
+              - not_null
+              - unique:
+                  config:
+                    severity: warn
+                    # 56 known duplicated timestamps (252 spurious rows) from
+                    # overlapping archive windows upstream. Deduplicated in
+                    # stg_binance__btcusdt_1s_klines; see README.md.
+
+          - name: open
+            description: First trade price in the interval, in USDT.
+          - name: high
+            description: Highest trade price in the interval, in USDT.
+          - name: low
+            description: Lowest trade price in the interval, in USDT.
+          - name: close
+            description: Last trade price in the interval, in USDT.
+
+          - name: volume
+            description: Volume traded in the interval, in BTC (the base asset).
+          - name: close_time
+            description: >
+              End of the interval (UTC), normally open_time + 999ms. Four rows
+              in this file close early instead (deltas of 0ms, 146ms, 362ms and
+              646ms), each at a collection seam -- so this is not an invariant
+              worth asserting.
+          - name: quote_asset_volume
+            description: Volume traded in the interval, in USDT (the quote asset).
+          - name: number_of_trades
+            description: Count of individual trades executed in the interval.
+          - name: taker_buy_base_asset_volume
+            description: Portion of `volume` where the buyer was the taker, in BTC.
+          - name: taker_buy_quote_asset_volume
+            description: Portion of `quote_asset_volume` where the buyer was the taker, in USDT.
+          - name: ignore
+            description: >
+              Unused filler retained by the Binance API for backwards
+              compatibility. The Kaggle description says it "typically contains
+              zeros or null values"; in this file it is 0 in all 110,671,732
+              rows, with no nulls. Dropped in staging either way.
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [0]
+                    quote: false
+
+# ----------------------------------------------------------------- models ---
+
+models:
+  - name: stg_binance__btcusdt_1s_klines
+    description: >
+      One row per second of BTCUSDT trading on Binance spot, in kline
+      (candlestick) form. Grain: one row per `bar_open_at`, enforced by the
+      unique test below. All timestamps are UTC and intentionally naive -- see
+      the model SQL for why. Byte-identical duplicate rows present in the source
+      are removed here.
+
+    data_tests:
+      # One combined expression rather than four separate ones: each test is a
+      # full pass over 110M rows, and these fail for the same underlying reason.
+      - dbt_utils.expression_is_true:
+          name: stg_binance__btcusdt_1s_klines_ohlc_bounds_coherent
+          arguments:
+            expression: >
+              high_price >= low_price
+              and high_price >= greatest(open_price, close_price)
+              and low_price <= least(open_price, close_price)
+
+      - dbt_utils.expression_is_true:
+          name: stg_binance__btcusdt_1s_klines_taker_volume_within_total
+          arguments:
+            expression: >
+              taker_buy_base_volume <= base_volume
+              and taker_buy_quote_volume <= quote_volume
+
+    columns:
+      - name: bar_open_at
+        description: >
+          Start of the 1-second interval (UTC). The primary key: exactly one bar
+          per second after deduplication.
+        data_tests:
+          - unique
+          - not_null
+
+          # The gap test. The dataset is nominally a continuous 1-second series,
+          # so any step other than +1s is missing data. This file has 59,448
+          # missing seconds across the span (Binance outages and maintenance
+          # halts), so it is a `warn`: we want the number surfaced on every
+          # build, not a red pipeline over a known property of the source.
+          # Revisit if the backtest turns out to be sensitive to the gaps.
+          - dbt_utils.sequential_values:
+              arguments:
+                interval: 1
+                datepart: second
+              config:
+                severity: warn
+
+      - name: bar_close_at
+        description: >
+          End of the 1-second interval (UTC), normally 999ms after
+          `bar_open_at`. Four rows close early; see the source docs above.
+
+      - name: open_price
+        description: First trade price in the interval, in USDT.
+        data_tests:
+          - not_null
+
+      - name: high_price
+        description: Highest trade price in the interval, in USDT.
+
+      - name: low_price
+        description: Lowest trade price in the interval, in USDT.
+
+      - name: close_price
+        description: >
+          Last trade price in the interval, in USDT. This is the price the
+          backtest buys and sells at, so a null here would be a silent
+          correctness bug downstream.
+        data_tests:
+          - not_null
+
+      - name: base_volume
+        description: Volume traded in the interval, in BTC.
+
+      - name: quote_volume
+        description: Volume traded in the interval, in USDT.
+
+      - name: taker_buy_base_volume
+        description: Portion of `base_volume` where the buyer was the taker, in BTC.
+
+      - name: taker_buy_quote_volume
+        description: Portion of `quote_volume` where the buyer was the taker, in USDT.
+
+      - name: trade_count
+        description: Count of individual trades executed in the interval.
