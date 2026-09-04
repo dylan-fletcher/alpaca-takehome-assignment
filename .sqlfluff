@@ -1,0 +1,55 @@
+# SQLFluff config. Run it the same way as everything else:
+#   uv run -- sqlfluff lint .
+#   uv run -- sqlfluff fix .
+# A PostToolUse hook in .claude/settings.json lints .sql files Claude edits.
+
+[sqlfluff]
+dialect = postgres
+
+# `jinja`, not `dbt`: sqlfluff stubs the dbt builtins (ref, source, config,
+# var), which is all our models use. Keeps linting a pure parse -- no adapter,
+# no running Postgres. Only ./run.sh should need Docker.
+templater = jinja
+
+# Warn, don't fail: both fire on `select *`, which is correct in import CTEs.
+warnings = AM04, ST06
+
+max_line_length = 80
+
+[sqlfluff:indentation]
+indented_ctes = false
+implicit_indents = allow
+
+[sqlfluff:layout:type:comma]
+line_position = trailing
+
+[sqlfluff:layout:type:alias_expression]
+# Staging aligns its `as` keywords so the rename reads as a mapping.
+spacing_before = align
+align_within = select_clause
+align_scope = bounded
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:references.keywords]
+# raw.btc_1s has these columns because the CSV does, and raw mirrors the CSV.
+# Renaming them there would be a lie about the source; staging renames instead.
+ignore_words = open,close,ignore
+
+[sqlfluff:rules:convention.terminator]
+# Models are one expression, no trailing `;`. load.sql is a script and needs
+# one per statement. This lets both be right.
+require_final_semicolon = false

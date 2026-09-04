@@ -1,0 +1,37 @@
+# Everything here is the static half of the pipeline: style, and whether the
+# project compiles. The data half cannot run in CI -- the dataset is 13.6 GB and
+# gitignored, and a fixture small enough to commit would miss the 4 truncated
+# bars and 56 duplicate timestamps the dbt tests exist to catch. Those stay a
+# local `./run.sh` concern, on purpose.
+
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs uv and restores its cache keyed on uv.lock, so the environment
+      # is the same one `uv run` builds locally.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: SQL lint
+        run: uv run -- python scripts/lint_sql.py
+
+      # dbt_packages/ is gitignored, and the staging tests use dbt_utils, so
+      # `dbt parse` fails without this: "found only 0 package(s) installed".
+      - name: Install dbt packages
+        run: uv run -- dbt deps
+
+      # Compiles every model and test and validates the YAML, without opening a
+      # database connection. profiles.yml resolves from the project directory.
+      - name: dbt parse
+        run: uv run -- dbt parse

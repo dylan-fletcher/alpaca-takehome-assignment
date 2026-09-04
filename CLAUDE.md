@@ -44,6 +44,11 @@ uv run -- dbt build --select stg_binance__btcusdt_1s_klines # one model and its 
 uv run -- dbt test  --select source:binance                 # source tests only
 uv run -- dbt parse                                         # validate YAML without touching the DB
 uv run -- dbt deps                                          # after editing packages.yml
+
+uv run -- python scripts/lint_sql.py         # lint every .sql file
+uv run -- python scripts/lint_sql.py x.sql   # lint one
+uv run -- python scripts/lint_sql.py --staged # lint what is staged for commit
+uv run -- sqlfluff fix .                     # auto-fix what is safely fixable
 ```
 
 `./run.sh` and `./query.sh` are deliberately thin bash shims that locate `uv`
@@ -146,6 +151,48 @@ add a test, decide which of those two it is.
 See `README.md` for the data-quality findings and the reasoning behind each
 modelling decision.
 
+## SQL style
+
+Enforced by SQLFluff (`.sqlfluff`) plus one local rule in `scripts/sql_style.py`.
+Three layers run it, all calling the same `scripts/lint_sql.py`:
+
+| Layer | Fires on | Config |
+|---|---|---|
+| `PostToolUse` hook | Claude's Write/Edit of a `.sql` file | `.claude/settings.json` |
+| `PreToolUse` hook | Claude running `git commit` (lints staged SQL) | `.claude/settings.json` |
+| GitHub Actions | every push to `master` and every PR | `.github/workflows/ci.yml` |
+
+The hooks are a fast feedback loop, not enforcement: they only see Claude's
+actions, and the `PostToolUse` one is blind to edits made through Bash rather
+than the Edit tool. **CI is the only layer that actually gates anything.**
+There is deliberately no `.git/hooks` pre-commit -- a single-maintainer repo
+does not need one, and it would not be version-controlled anyway.
+
+The conventions:
+
+- **Lower case keywords**, 80-character lines, trailing commas.
+- **Import CTEs at the top.** Each one is `select * from {{ source(...) }}` or
+  `{{ ref(...) }}` and nothing else. Real work happens in later CTEs, so the
+  dependencies of a model are readable from its first few lines.
+- **Keywords start their line.** `select`, `from`, `where` are never trailed by
+  the first target.
+- **A select list is one contiguous block.** Group it with `---------- banner`
+  comments, not blank lines. This is the `SQ01` rule in `sql_style.py`;
+  SQLFluff collapses two blank lines into one but has no setting to forbid
+  them, and this is the sort of claim that rots if left as prose.
+- **Aliases align.** `spacing_before = align` keeps the `as` keywords in a
+  column so a rename block reads as a mapping.
+- **Comments earn their length.** Say why, in a few lines. Numbers and full
+  workings go in `README.md`, which is where someone goes looking for them.
+
+`sqlfluff fix` handles most of this. It cannot fix `SQ01`, long lines, or a
+comment that is too long, which are the ones worth thinking about anyway.
+
+Two deliberate exemptions, both in `.sqlfluff` with the reasoning inline:
+`AM04`/`ST06` are warnings because `select *` is correct in an import CTE, and
+`RF04` ignores `open`, `close` and `ignore` because `raw` mirrors the CSV
+verbatim.
+
 ## Testing and data assumptions
 
 **Every assumption about the data must be expressed as a test, not as prose.** A
@@ -215,3 +262,22 @@ Each entry below is a failure already paid for once:
 - **Timestamps are intentionally naive `timestamp`, not `timestamptz`.** The
   data is UTC; casting would make `extract(hour from ...)` depend on the session
   `TimeZone` and make the hourly backtest non-deterministic. Don't "fix" this.
+- **SQLFluff's `RF04` ignores `unquoted_identifiers_policy` for DDL.** The
+  policy already defaults to `aliases`, yet the rule still fires on column names
+  in `create table`. `ignore_words` is the only lever that works there.
+- **`FluffConfig.from_path()` walks up from the path you hand it**, not from the
+  project. Give it a file outside the repo and it finds no `.sqlfluff` and dies
+  with "No dialect was specified". `sql_style.py` anchors it to the repo root.
+- **`allow_implicit_indents` is deprecated** in favour of
+  `implicit_indents = allow`. The old spelling still works but prints a
+  paragraph of warning on every single lint, which buries real findings.
+- **CI must run `dbt deps` before `dbt parse`.** `dbt_packages/` is gitignored
+  and the staging tests use `dbt_utils`, so a clean checkout fails parse with
+  "found only 0 package(s) installed" -- which reads like a dbt bug, not a
+  missing step.
+- **`dbt parse` needs no database.** It resolves `profiles.yml` from the project
+  directory (there is no `~/.dbt`) and never opens a connection, which is what
+  makes it usable in CI. `dbt build` is not, and cannot be: the dataset is
+  13.6 GB and gitignored.
+- **GitHub Actions does not clone for you.** Unlike GitLab CI, every job needs
+  an explicit `actions/checkout` step first.

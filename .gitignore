@@ -25,3 +25,6 @@ data/
 
 # dbt local anonymous-usage id (per-machine, not shared)
 .user.yml
+
+# sqlfluff
+.sqlfluffcache/

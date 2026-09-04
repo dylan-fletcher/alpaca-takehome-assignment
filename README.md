@@ -1,5 +1,7 @@
 # BTC Hourly Backtest
 
+[![ci](https://github.com/dylan-fletcher/alpaca-takehome-assignment/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-fletcher/alpaca-takehome-assignment/actions/workflows/ci.yml)
+
 A dbt + Postgres pipeline over Binance's 1-second BTCUSDT tape, built to answer
 an analyst's questions about hourly trading strategies.
 
