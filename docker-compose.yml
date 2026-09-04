@@ -12,6 +12,12 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # The dataset is assumed to sit in the repo root at run time (per the
+      # assignment brief) and is never committed. Mounted read-only so the
+      # Postgres backend can COPY from it directly.
+      # CSV_FILE lets run.sh point the load at a smaller fixture for testing.
+      - ${CSV_FILE:-./half2_BTCUSDT_1s.csv}:/data/dataset.csv:ro
+      - ./sql:/sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dbt -d bitcoin"]
       interval: 3s
