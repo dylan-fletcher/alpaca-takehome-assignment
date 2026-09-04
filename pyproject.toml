@@ -18,4 +18,5 @@ package = false
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "sqlfluff>=4.3.0",
 ]
