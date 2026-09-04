@@ -29,10 +29,12 @@ renamed as (
 
     select
         ---------- grain
+        -- Passed through unrenamed: the source names are already accurate, and
+        -- keeping them makes the 1:1 relationship with the CSV obvious.
         -- Naive `timestamp`, not `timestamptz`: the data is UTC, and casting
         -- would make `extract(hour from ...)` depend on the session TimeZone.
-        open_time                    as bar_open_at,
-        close_time                   as bar_close_at,
+        open_time,
+        close_time,
         ---------- prices (USDT)
         -- `open` and `close` are renamed for clarity, and because both are
         -- reserved words in ANSI SQL.

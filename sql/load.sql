@@ -10,12 +10,18 @@
 
 create schema if not exists raw;
 
-drop table if exists raw.btc_1s;
+-- `cascade` because dbt's staging view is built on this table. Without it a
+-- --reload fails once dbt has run at least once. The next `dbt build`
+-- recreates the view, so nothing is lost.
+drop table if exists raw.btc_1s cascade;
 
--- Unlogged on purpose: a reproducible landing table in a throwaway container,
--- and skipping WAL roughly halves the load time for 13.6 GB. An unclean
--- shutdown truncates it; `./run.sh --reload` rebuilds it from the CSV.
-create unlogged table raw.btc_1s (
+-- Logged, not `unlogged`. Skipping WAL roughly halves the COPY, but Postgres
+-- truncates every unlogged table after an unclean shutdown -- so one Docker
+-- Desktop or WSL restart silently costs another full ten-minute load. The
+-- repeated cost in this project is iterating on models, not loading, so
+-- durability is worth more than a faster one-off. The pgdata volume is named
+-- and persistent, so a logged table survives `docker compose down` too.
+create table raw.btc_1s (
     open_time timestamp not null,
     open numeric(20, 8),
     high numeric(20, 8),

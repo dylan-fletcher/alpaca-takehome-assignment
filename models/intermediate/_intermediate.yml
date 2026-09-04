@@ -1,0 +1,53 @@
+version: 2
+
+models:
+  - name: int_btcusdt_hourly_prices
+    description: >
+      One row per hour of the covered span, carrying the only two prices the
+      backtest needs: the price at the first second of the hour (what the
+      analyst buys at) and the price at the last second (what they sell at).
+      Grain: one row per `hour_start_at`, UTC.
+
+      Both prices are null when the exchange published no data at that exact
+      second. That is not a defect to patch -- it is the definition of an hour
+      the strategy could not have entered or exited, and the fact layer drops
+      those hours rather than substituting a nearby price.
+
+    data_tests:
+      # Prices feed exp(sum(ln(...))) compounding downstream, which is
+      # undefined at or below zero. Nulls pass: `not (null)` is null, so
+      # untradeable hours are not flagged here.
+      - dbt_utils.expression_is_true:
+          name: int_btcusdt_hourly_prices_positive
+          arguments:
+            expression: open_price > 0 and close_price > 0
+
+    columns:
+      - name: hour_start_at
+        description: >
+          Start of the hour (UTC), truncated from the second-grain
+          `open_time`. The primary key.
+        data_tests:
+          - unique
+          - not_null
+
+          # 13 hour buckets fall entirely inside an outage and so produce no
+          # row at all. This reports the ~7 outage windows rather than the 13
+          # hours, which is the number worth looking at. `warn` because it is
+          # a known property of the source, not a pipeline fault.
+          - dbt_utils.sequential_values:
+              arguments:
+                interval: 1
+                datepart: hour
+              config:
+                severity: warn
+
+      - name: open_price
+        description: >
+          Price at the first second of the hour, in USDT -- the open of the
+          :00:00 second. Null if that second is missing from the source.
+
+      - name: close_price
+        description: >
+          Price at the last second of the hour, in USDT -- the close of the
+          :59:59 second. Null if that second is missing from the source.

@@ -15,7 +15,10 @@ models:
       +materialized: view
       +schema: staging
     intermediate:
-      +materialized: view
+      # Table, not view: this is the one model that scans all 110M seconds.
+      # As a view every downstream fact, test and ad-hoc query would repeat
+      # that scan; as a table it is paid once for ~30.7k rows.
+      +materialized: table
       +schema: intermediate
     facts:
       +materialized: table

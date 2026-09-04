@@ -13,14 +13,16 @@ whole thing is reproducible from a clean checkout plus the source CSV.
 ## Quickstart
 
 ```bash
-./run.sh                                       # full 13.6 GB load, ~7 minutes
+./run.sh                                       # first load: 13.6 GB, ~10 min
 ./query.sh "select count(*) from raw.btc_1s"   # scratch queries
 ```
 
 Put `half2_BTCUSDT_1s.csv` in the repo root first; it is not committed (see the
-assignment brief), and neither is any other `.csv`. For a fast iteration loop,
-carve off a sample and point `--csv` at it — this turns a 7-minute cycle into a
-1-second one:
+assignment brief), and neither is any other `.csv`.
+
+The load only happens once, so day-to-day iteration is already fast. To
+exercise the *load path itself* without waiting ten minutes, carve off a sample
+and point `--csv` at it:
 
 ```bash
 head -n 200001 half2_BTCUSDT_1s.csv > fixture.csv   # header + 200k rows
@@ -50,11 +52,14 @@ things:
 3. **`dbt build`** — builds the models and runs every test.
 4. **Answer the questions** — runs `sql/final_query.sql` and prints the result.
 
-The landing table is `UNLOGGED` on purpose. It is a reproducible staging area in
-a disposable container, and skipping WAL roughly halves the load time. An
-unclean shutdown truncates it; `./run.sh --reload` rebuilds it from the file.
+The landing table lives on a named Docker volume and is logged, so **the load
+is a one-off**: it survives container restarts and `docker compose down`, and
+`./run.sh` skips straight to `dbt build` when the rows are already there. Only
+`--reload` rebuilds it. An `UNLOGGED` table would COPY roughly twice as fast,
+but Postgres truncates unlogged tables after any unclean shutdown — and the
+repeated cost in this project is iterating on models, not loading.
 
-The full load takes **395 seconds** for 110.7M rows on a laptop-class machine.
+The full load takes **623 seconds** for 110.7M rows on a laptop-class machine.
 
 ### Repo layout
 
@@ -64,6 +69,7 @@ query.sh / query.py      scratch queries against the database
 db.py                    shared connection + psql-script helpers
 sql/load.sql             landing-table DDL and COPY
 models/staging/binance/  source definition, staging model, tests
+models/intermediate/     hourly rollup to the grain the backtest trades on
 docker-compose.yml       Postgres 16
 ```
 
@@ -84,7 +90,26 @@ included. The CSV is never committed — see the assignment brief.
 | Rows loaded | 110,671,732 (110,671,480 after deduplication) |
 | Coverage | 2021-02-23 09:20:20 → 2024-08-27 23:59:59 (UTC) |
 | Grain | one row per second |
-| Columns | 12, matching the Binance kline API payload |
+| Columns | 12, matching the payload of Binance's `/klines` endpoint |
+
+**What a row is.** Each row summarises one second of trading with five numbers,
+conventionally abbreviated **OHLCV**:
+
+| | |
+|---|---|
+| **O**pen | price of the first trade in that second |
+| **H**igh | highest price reached during it |
+| **L**ow | lowest price reached during it |
+| **C**lose | price of the last trade in that second |
+| **V**olume | how much BTC changed hands |
+
+Models are named after those columns — `stg_binance__btcusdt_1s_ohlcv` is one
+second of OHLCV per row. The remaining columns are timestamps, a trade count,
+and the same volume split by whether the buyer or seller initiated the trade.
+
+(Elsewhere this shape is called a *candle*, a *bar*, or — on the Binance
+endpoint this data came from — a *kline*. Those names appear below only where
+they identify Binance's own API.)
 
 **The row count reconciles exactly.** The file is 110,671,733 lines: one header
 plus 110,671,732 data rows, which is what we load. Two notes where the Kaggle
@@ -193,7 +218,32 @@ All four fall on days that also carry duplicate seams — the same collection
 boundaries. Each bar still sits in the correct second, so hourly bucketing is
 unaffected. Noted rather than corrected.
 
-### 4. Clean results
+### 4. Hourly completeness — 22 of 30,759 hours cannot be traded
+
+The strategy transacts at two specific seconds, `:00:00` and `:59:59`, so the
+only completeness question that matters is whether those two rows exist. An
+hour missing three seconds around `:17:30` is perfectly tradeable; an hour
+missing `:00:00` is not, at any price.
+
+Measured across the full span:
+
+| | |
+|---|---|
+| Hour buckets in span | 30,759 |
+| Entirely absent (wholly inside an outage) | 13 |
+| Present but missing a boundary second | 9 |
+| **Untradeable** | **22** (0.07%) |
+
+All 22 fall inside the seven outage windows above, concentrated in 02:00–08:00
+UTC. `int_btcusdt_hourly_prices` leaves both prices null for those hours rather
+than substituting a nearby price, and the fact layer will drop them.
+
+Note that "incomplete" and "untradeable" are not the same set, and counting on
+`raw` gets it wrong: the duplicate seams inflate a bucket's row count to 3,600
+while it still holds fewer than 3,600 distinct seconds. The rollup therefore
+reads the deduplicated staging model, never `raw`.
+
+### 5. Clean results
 
 - `ignore` is `0` in all 110,671,732 rows, with no nulls. (Kaggle hedges that it
   "typically contains zeros or null values"; in this file it is uniformly 0.)
@@ -207,9 +257,27 @@ unaffected. Noted rather than corrected.
 
 ## Design decisions
 
+**The hourly model carries two prices and nothing else.** The obvious thing to
+build is an hourly version of the source: one row per hour with the same five
+OHLCV columns, aggregated up from the 3,600 seconds inside it. This project
+does not, because the strategy buys at the first second of the hour and sells
+at the last, so those 3,600 seconds collapse to exactly two numbers — the price
+at `:00:00` and the price at `:59:59`. Carrying the hour's high, low and volume
+as well would cost the same single scan, but it would mean maintaining a
+general-purpose hourly table for one consumer that never reads three of its
+columns. Adding them later is a one-line change if a question needs them.
+
+**"First second of the hour" is a filter, not a ranking.** `:00:00` and
+`:59:59` are calendar constants, so the model selects them with a `where`
+clause and never ranks or windows. Taking instead the *first available* bar —
+`first_value`, or a `row_number` filtered in an outer query — would silently
+hand the backtest a price from 45 minutes into an hour the exchange was down
+for, which is how 2021-04-25 08:00 would have acquired an 08:45:00 entry price.
+Postgres has no `QUALIFY`, but nothing here needs one.
+
 **Duplicates are removed in staging, not in the landing table.** `raw.btc_1s`
 stays a faithful byte-for-byte mirror of the CSV, so the defect remains
-observable and the load stays a pure transcription. `stg_binance__btcusdt_1s_klines`
+observable and the load stays a pure transcription. `stg_binance__btcusdt_1s_ohlcv`
 applies `distinct on (open_time)`. Because every duplicate is identical,
 retaining an arbitrary copy discards no information.
 
@@ -262,7 +330,7 @@ we have already characterised and handled.
 key uniqueness and not-null on the columns the backtest transacts against.
 
 **Gap detection** uses `dbt_utils.sequential_values` with `interval: 1,
-datepart: second` on `bar_open_at`. The dataset is nominally a continuous
+datepart: second` on `open_time`. The dataset is nominally a continuous
 1-second series, so any step other than +1s is missing data. It runs at `warn`
 because the gaps are a property of the source rather than a pipeline bug — but
 the count is printed on every build, so a *change* in it is visible. It reports
@@ -281,12 +349,10 @@ components fail for the same underlying reason.
 
 - **Only Part 2 is loaded.** 2017-08-17 through 2021-02-23 lives in Part 1 and
   is not included, so results cover 2021-02-23 onward.
-- **Intermediate and facts layers are not built yet.** `models/intermediate/`
-  and `models/facts/` are empty, and `sql/final_query.sql` does not exist —
-  `run.sh` step 4 skips gracefully until it does.
-- **The gaps are surfaced but not handled.** 59,700 missing seconds across 7
-  outages are currently just counted. Whether an hour with missing seconds should be
-  excluded from the backtest, forward-filled, or used as-is is a modelling
-  decision that belongs with the hourly rollup.
-- **Staging is a view over 110M rows.** If the hourly rollup proves slow, the
-  fix is to materialize this model as a table; it is a one-line config change.
+- **The facts layer is not built yet.** `models/facts/` is empty and
+  `sql/final_query.sql` does not exist — `run.sh` step 4 skips gracefully until
+  it does. `int_btcusdt_hourly_prices` is the input it will compound over.
+- **Returns are not compared for significance.** Picking the best of 24 hours
+  over 3.5 years is a multiple-comparisons exercise, and the winner is partly
+  noise. The performance fact should carry trade counts and a spread alongside
+  the headline return.
