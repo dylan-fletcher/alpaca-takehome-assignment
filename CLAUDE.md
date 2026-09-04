@@ -82,6 +82,22 @@ gh pr status         # where the current branch's PR stands
 gh pr checks         # CI results
 ```
 
+Merging: **always squash and merge, and always delete the branch afterwards.**
+
+```bash
+gh pr merge <number> --squash --delete-branch
+git switch master && git pull    # pick up the squashed commit locally
+```
+
+Squash keeps `master` at one commit per change, so its history reads as a list
+of shipped units rather than the work-in-progress steps taken to get there —
+those stay visible in the PR itself, which is where they are useful. The default
+squash message is the PR title and body; override with `--subject`/`--body`.
+
+`--delete-branch` removes the remote branch and the local one, so merged feature
+branches never accumulate. Do this as part of the merge, not as a follow-up
+someone has to remember.
+
 Notes:
 
 - **Always pass `--title`/`--body-file` or `--fill`.** A bare `gh pr create`
@@ -182,6 +198,11 @@ commit, so this file never drifts from the code.
 
 Each entry below is a failure already paid for once:
 
+- **A PR that "won't merge" right after a force-push is usually just
+  recomputing.** `gh pr view --json mergeable` returns `UNKNOWN` and the web UI
+  shows a spinner while GitHub re-runs its test-merge; querying it is what
+  nudges the job along. Poll until it reports `MERGEABLE / CLEAN` rather than
+  hunting for branch protection or failing checks.
 - **`CSV_FILE` must be an absolute path.** Compose reads a mount source with no
   leading `./` or `/` as a *named volume*, and `Path()` strips `./`. `run.py`
   calls `.resolve()` for this reason.
