@@ -146,6 +146,20 @@ a persistent volume, so the load survives restarts and `run.py` skips it when
 rows are already present. Data defects are corrected in the staging model,
 never in the load.
 
+**The fact layer answers the questions; the intermediate model feeds it.**
+`fct_btcusdt_hourly_trades` is the per-trade ledger (one row per tradeable
+hour, with `gross_return` as a multiplier), and `fct_btcusdt_strategy_by_hour`
+aggregates it to 24 rows. Compounding uses the `product()` macro rather than a
+raw `exp(sum(ln(...)))` -- keep it that way, and keep the reasoning in the
+macro rather than duplicated at each call site.
+
+**Four vars parameterise the backtest**, all in `dbt_project.yml`:
+`trade_hour` (null = all 24), `initial_units`, `backtest_start_date`
+(2021-02-24, excluding the partial first day) and `backtest_end_date` (null =
+end of data). `run.py` plumbs `--trade-hour` through to `dbt build --vars`.
+Anything that filters or scales the backtest belongs here, not hard-coded in a
+model.
+
 **Test severities encode intent.** Source tests run at `warn` and describe the
 file as it arrives (known upstream defects, surfaced but not blocking). Staging
 tests run at `error` and assert things we are willing to fail a build on. If you
@@ -284,6 +298,22 @@ Each entry below is a failure already paid for once:
   13.6 GB and gitignored.
 - **GitHub Actions does not clone for you.** Unlike GitLab CI, every job needs
   an explicit `actions/checkout` step first.
+- **SQLFluff needs `load_macros_from_path` to see project macros.** Without it
+  every model calling one fails with `TMP: Undefined jinja template variable`
+  pointing at the *call site*, which reads as a typo in the model rather than a
+  missing search path. Set in `.sqlfluff` under `[sqlfluff:templater:jinja]`.
+- **SQLFluff's stubbed `var()` never returns `None`.** So `{% if var('x') is
+  not none %}` branches are always rendered during linting, even when the
+  default build never emits them. They must satisfy the indentation rules
+  regardless -- and a branch that renders to nothing but a bare `and` will fail
+  to parse.
+- **`sqlfluff fix` reorders select lists (ST06) but leaves comments put.**
+  Banner comments do not travel with the columns they head, so after a fix they
+  can silently describe the wrong block. Re-read the select list after fixing.
+- **Singular tests that `ref()` nothing are invisible to `--select model+`.**
+  A macro unit test has no model in its lineage, so it never runs in a selected
+  build and only appears in a bare `dbt build`. Select it by name to run it
+  alone.
 - **`drop table raw.btc_1s` needs `cascade` once dbt has run.** The staging
   view depends on it, so a bare drop fails with `DependentObjectsStillExist`
   mid-`--reload`. The next `dbt build` recreates the view.
