@@ -1,0 +1,193 @@
+# The fact layer: one row per trade, and one row per candidate hour.
+#
+# Tests here run at `error` without exception. Everything below is arithmetic
+# this project performs, not a property of the source file -- the `warn`
+# severities upstream describe data that arrived imperfect, whereas a failure
+# here means the backtest computed the wrong number.
+
+version: 2
+
+models:
+  - name: fct_btcusdt_hourly_trades
+    description: >
+      One row per completed trade: buy at the first second of an hour, sell at
+      the last second of the same hour. Grain: one row per `hour_start_at`,
+      UTC.
+
+      Hours the exchange did not publish a boundary price are absent rather
+      than null -- there was no trade to record. The window starts at
+      `backtest_start_date` so that all 24 hours are compared over identical
+      dates; see `dbt_project.yml`.
+
+    data_tests:
+      # `ln` is undefined at or below zero, so a non-positive multiplier would
+      # not fail the summary model -- it would quietly return null for that
+      # hour's total return. Caught here instead, where it is legible.
+      - dbt_utils.expression_is_true:
+          name: fct_btcusdt_hourly_trades_return_is_positive
+          arguments:
+            expression: gross_return > 0
+
+      # The two spellings of the return must agree. They are computed from the
+      # same prices, so this fails only if one of them is edited alone.
+      - dbt_utils.expression_is_true:
+          name: fct_btcusdt_hourly_trades_return_spellings_agree
+          arguments:
+            expression: abs(return_pct - (gross_return - 1) * 100) < 0.000001
+
+    columns:
+      - name: hour_start_at
+        description: >
+          Start of the traded hour (UTC). The primary key: one trade per hour
+          at most, and only for hours that were actually tradeable.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: trade_date
+        description: Calendar date of the trade (UTC).
+        data_tests:
+          - not_null
+
+      - name: trade_hour
+        description: >
+          Hour of the day, 0-23. The key the analyst's questions rank on.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 23
+                inclusive: true
+
+      - name: day_of_week
+        description: >
+          ISO day of week, 1 = Monday through 7 = Sunday. Carried so the
+          analyst can restrict the analysis to particular days without a
+          model change, which the brief asks for.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 7
+                inclusive: true
+
+      - name: entry_price
+        description: Price paid at the first second of the hour, in USDT.
+        data_tests:
+          - not_null
+
+      - name: exit_price
+        description: Price received at the last second of the hour, in USDT.
+        data_tests:
+          - not_null
+
+      - name: gross_return
+        description: >
+          `exit_price / entry_price` -- the multiplier the stake is scaled by.
+          1.007241 means the hour ended with 1.007241x what it opened with.
+          This is the form that compounds: a run of trades multiplies these
+          together.
+        data_tests:
+          - not_null
+
+      - name: return_pct
+        description: >
+          The same number as a percentage, `(gross_return - 1) * 100`. Correct
+          to average and to take a minimum of; wrong to sum across trades,
+          because the stake is reinvested.
+        data_tests:
+          - not_null
+
+  - name: fct_btcusdt_strategy_by_hour
+    description: >
+      One row per hour of the day -- how the strategy performed if the analyst
+      only ever traded that hour. Exactly 24 rows. This is the table
+      `sql/final_query.sql` reads to answer both questions.
+
+    data_tests:
+      - dbt_utils.expression_is_true:
+          name: fct_btcusdt_strategy_by_hour_extremes_bracket_the_mean
+          arguments:
+            expression: >
+              worst_trade_pct <= avg_return_pct
+              and avg_return_pct <= best_trade_pct
+
+    columns:
+      - name: trade_hour
+        description: Hour of the day, 0-23 (UTC). The primary key.
+        data_tests:
+          - unique
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 23
+                inclusive: true
+
+      - name: trade_count
+        description: >
+          Trades this hour actually made. Not equal across hours: the seven
+          outage windows cost some hours a handful of days. Exposed rather
+          than hidden so an uneven comparison is visible.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+
+      - name: first_trade_date
+        description: Earliest date this hour traded.
+      - name: last_trade_date
+        description: Latest date this hour traded.
+
+      - name: total_return_pct
+        description: >
+          **Question 1.** Compounded return across every trade in this hour,
+          as a percentage. Each trade's proceeds fund the next, so this is the
+          product of the multipliers less one -- not the sum of `return_pct`.
+          Summing would assume a constant stake, which the brief rules out.
+        data_tests:
+          - not_null
+
+      - name: ending_units
+        description: >
+          What `initial_units` becomes after the last trade, in units of the
+          opening stake. Starting from 1 BTC, 1.42 means the account ended
+          worth 1.42x what it began with.
+        data_tests:
+          - not_null
+
+      - name: worst_trade_pct
+        description: >
+          **Question 2.** The largest single-trade loss this hour ever took,
+          as a negative percentage. The hour with the *highest* value here --
+          the least-negative one -- has the lowest maximum loss.
+
+          Single-trade rather than peak-to-trough: the strategy holds nothing
+          overnight, so losses never accumulate across trades.
+        data_tests:
+          - not_null
+
+      - name: best_trade_pct
+        description: Largest single-trade gain this hour, as a percentage.
+      - name: avg_return_pct
+        description: >
+          Mean `return_pct` per trade. Carried as a cross-check on
+          `total_return_pct`: the two rank hours slightly differently, because
+          compounding penalises volatility that an average ignores.
+      - name: stddev_return_pct
+        description: >
+          Sample standard deviation of `return_pct`. Context for the ranking,
+          which is drawn from 24 candidates over one sample and so contains
+          some luck.
+      - name: win_rate_pct
+        description: Share of this hour's trades that closed above their entry.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true

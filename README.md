@@ -68,9 +68,57 @@ run.sh / run.py          entrypoint and orchestration
 query.sh / query.py      scratch queries against the database
 db.py                    shared connection + psql-script helpers
 sql/load.sql             landing-table DDL and COPY
+sql/final_query.sql      the two answers, run as step 4
 models/staging/binance/  source definition, staging model, tests
 models/intermediate/     hourly rollup to the grain the backtest trades on
+models/facts/            the trade ledger and the per-hour ranking
+macros/product.sql       multiply a column across a group
+tests/                   singular tests spanning more than one model
 docker-compose.yml       Postgres 16
+```
+
+---
+
+## Results
+
+Both questions resolve to the **same hour: 22:00 UTC**, over 1,281 trading days
+from 2021-02-24 to 2024-08-27.
+
+| | Answer | |
+|---|---|---|
+| **Q1** — biggest returns | **22:00 UTC** | +40.59% compounded |
+| **Q2** — lowest maximum loss | **22:00 UTC** | worst single trade −2.92% |
+
+That one hour tops both rankings is a coincidence worth stating rather than a
+result the modelling forces — the two columns are computed independently, and
+nothing about a high total return implies a shallow worst trade. 21:00 is a
+close second on return (+40.13%) but its worst trade is −5.15%, nearly twice
+as deep.
+
+The full ranking prints on every `./run.sh`. The top and bottom of it:
+
+| Hour (UTC) | Trades | Total return | Worst trade | Win rate |
+|---|---|---|---|---|
+| 22:00 | 1281 | **+40.59%** | **−2.92%** | 51.3% |
+| 21:00 | 1281 | +40.13% | −5.15% | 54.5% |
+| 10:00 | 1281 | +30.28% | −3.57% | 51.3% |
+| … | | | | |
+| 01:00 | 1281 | −25.81% | −5.41% | 48.2% |
+| 19:00 | 1281 | −26.95% | −6.24% | 51.7% |
+| 03:00 | 1278 | −29.49% | −6.44% | 51.6% |
+
+**Read these as a description of the sample, not a forecast.** The spread from
+best to worst hour is 70 percentage points, but it is drawn from 24 candidates
+over a single 3.5-year window, and every hour's win rate sits within a few
+points of a coin flip. Picking the best of 24 is a multiple-comparisons
+exercise; the winner is partly noise. `stddev_return_pct` is carried on the
+fact table for exactly this reason.
+
+To re-run for one hour, or over a different window:
+
+```bash
+./run.sh --skip-load --trade-hour 22
+uv run -- dbt build --vars '{backtest_start_date: "2023-01-01"}'
 ```
 
 ---
@@ -292,6 +340,64 @@ every build. An `error`-severity `unique` test on the *staging model* proves the
 deduplication actually works. If the source were silently fixed upstream, or the
 dedup logic regressed, one of the two would tell us.
 
+**Returns compound; they are not summed.** The brief says profits are "fully
+reinvested in subsequent buys/sells", so each trade's proceeds fund the next
+and the per-trade multipliers *multiply*. The fact layer therefore carries
+`gross_return` (`exit / entry`) alongside `return_pct`, and the hourly total is
+the product of the multipliers less one. Summing `return_pct` instead would
+assume a constant stake every day, which the brief rules out.
+
+It is not a cosmetic difference. Compounding penalises volatility that an
+average ignores, and the two disagree by up to 3 percentage points here — over
+the untrimmed span, hour 15 was +10.85% compounded against +14.06% summed, and
+the two orderings swap several mid-table hours. They agree on the winner, which
+is worth knowing but was not knowable in advance. `avg_return_pct` is kept on
+the fact table so the comparison stays visible.
+
+**The product lives in a macro, not in the model.** Postgres has no `product()`
+aggregate, so `macros/product.sql` reaches one through the log identity
+`a * b * c = exp(ln(a) + ln(b) + ln(c))`. That is a workaround for a missing
+aggregate function, not a statistical technique — but `exp(sum(ln(x)))` sitting
+raw in a select list is something a reader has to stop and decode. Behind a
+macro the model reads `{{ product('gross_return') }}`, the explanation lives in
+one place, and `tests/assert_product_macro_is_exact.sql` pins it to a product
+anyone can check by eye (`2 * 3 * 4 = 24`). The round trip is accurate to about
+5e-16, which is why that test carries a tolerance rather than an equality.
+
+**"Maximum loss" is the worst single trade, not a drawdown.** The strategy
+enters at `:00:00` and exits at `:59:59` of the same hour, holding nothing
+overnight, so a trade's percentage loss is unaffected by every other trade.
+Losses never accumulate into a peak-to-trough curve, and `min(return_pct)` is
+the whole answer. A drawdown series would be the right measure for a strategy
+that stayed in the market between trades; this one does not.
+
+Note the sort direction this implies. `worst_trade_pct` is negative, so the
+*lowest maximum loss* is the **greatest** value — `order by worst_trade_pct
+desc`. Sorting it the intuitive way returns precisely the wrong hour and looks
+entirely plausible doing it, which is why `sql/final_query.sql` says so inline.
+
+**2021-02-23 is excluded from the backtest.** The file begins at 09:20:20 that
+day, so hours 10–23 could trade it and hours 00–09 could not. Left in, the
+later hours get a free extra trade in a ranking that compares all 24 against
+each other. `backtest_start_date` defaults to 2021-02-24 and every hour then
+runs over identical dates — 1,281 trading days, minus whatever the seven
+outages cost each hour individually (hence `trade_count` on the fact table,
+which ranges 1277–1281).
+
+**Untradeable hours are dropped, not filled.** `int_btcusdt_hourly_prices`
+leaves both prices null for the 22 hours missing a `:00:00` or `:59:59`, and
+the ledger drops those rows. Recording them as a 1.0 multiplier would be
+arithmetically identical; dropping them keeps `trade_count` an honest statement
+of what was actually traded. What would *not* be acceptable is substituting a
+nearby price — that invents a trade the analyst could not have made.
+
+**Two fact models, not one.** `fct_btcusdt_hourly_trades` is the per-trade
+ledger; `fct_btcusdt_strategy_by_hour` aggregates it to the 24 rows the
+questions are asked of. The brief asks for the analysis to be repeatable "for
+different hours and days of entering the market", and a 24-row summary cannot
+answer "what about Mondays?" The ledger carries `trade_date` and `day_of_week`
+so that question is a `group by`, not a model change.
+
 **Timestamps stay naive `timestamp`, not `timestamptz`.** Binance data is UTC.
 Casting to `timestamptz` would make `extract(hour from ...)` depend on the
 session `TimeZone` setting — turning the central grouping key of an hourly
@@ -337,6 +443,21 @@ the count is printed on every build, so a *change* in it is visible. It reports
 7 (outage windows), not 59,700 (missing seconds), which is the more actionable
 number.
 
+**Fact-layer tests never warn.** Everything upstream describes a file that
+arrived imperfect, so known defects sit at `warn`. Nothing in `models/facts/`
+is a property of the source — it is arithmetic this project performs, and a
+failure means the backtest computed the wrong number. Three of them span more
+than one model and so live in `tests/` as singular tests:
+
+| Test | Catches |
+|---|---|
+| `assert_product_macro_is_exact` | the compounding macro drifting from `2 * 3 * 4 = 24` |
+| `assert_all_24_hours_are_ranked` | an hour vanishing from the ranking, which would still return a plausible winner |
+| `assert_summary_accounts_for_every_trade` | the two fact models' filters diverging |
+
+The second is disabled when `trade_hour` is set, since 23 missing hours are
+then the point rather than a defect.
+
 **Invariant tests** (`dbt_utils.expression_is_true`) cover OHLC coherence
 (`high >= max(open, close)`, `low <= min(open, close)`, `high >= low`) and taker
 volume never exceeding total volume. These are combined into two expressions
@@ -348,11 +469,18 @@ components fail for the same underlying reason.
 ## Known limitations and next steps
 
 - **Only Part 2 is loaded.** 2017-08-17 through 2021-02-23 lives in Part 1 and
-  is not included, so results cover 2021-02-23 onward.
-- **The facts layer is not built yet.** `models/facts/` is empty and
-  `sql/final_query.sql` does not exist — `run.sh` step 4 skips gracefully until
-  it does. `int_btcusdt_hourly_prices` is the input it will compound over.
-- **Returns are not compared for significance.** Picking the best of 24 hours
+  is not included, so results cover 2021-02-24 onward.
+- **Returns are not tested for significance.** Picking the best of 24 hours
   over 3.5 years is a multiple-comparisons exercise, and the winner is partly
-  noise. The performance fact should carry trade counts and a spread alongside
-  the headline return.
+  noise. `trade_count` and `stddev_return_pct` are carried so the spread is at
+  least visible, but nothing here computes a confidence interval or corrects
+  for the 24 simultaneous comparisons. That is the first thing to add before
+  anyone acts on the ranking.
+- **No trading costs.** Returns are gross. Binance spot fees run about 0.1% per
+  side at the base tier, so roughly 0.2% a round trip — against a mean
+  per-trade return of 0.03% on the winning hour, fees would swamp the edge
+  entirely. The ranking is a statement about price behaviour, not a claim that
+  the strategy is profitable.
+- **Fills are assumed at the printed price.** The backtest transacts at the
+  open of `:00:00` and the close of `:59:59` with no slippage and no size
+  limit.

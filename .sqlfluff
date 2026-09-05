@@ -16,6 +16,12 @@ warnings = AM04, ST06
 
 max_line_length = 80
 
+# Without this the `product` macro reads as an undefined variable and every
+# model that calls it fails to parse -- as a TMP error pointing at the call
+# site, which looks like a typo rather than a missing search path.
+[sqlfluff:templater:jinja]
+load_macros_from_path = macros
+
 [sqlfluff:indentation]
 indented_ctes = false
 implicit_indents = allow
