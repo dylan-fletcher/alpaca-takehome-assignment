@@ -34,6 +34,8 @@ SERVICE = "postgres"
 # Everything Python-side runs through uv, so there is no venv to activate.
 UV_RUN = ("uv", "run", "--")
 CSV_IN_CONTAINER = "/data/dataset.csv"
+# Stands in for the dataset when there is none to mount; see preflight().
+NULL_MOUNT = "/dev/null"
 LOAD_SQL = ROOT / "sql" / "load.sql"
 FINAL_SQL = ROOT / "sql" / "final_query.sql"
 
@@ -95,7 +97,8 @@ def preflight(args: argparse.Namespace) -> None:
     # not exist causes Docker to silently create a *directory* at that path, and
     # the COPY then fails with a confusing "is a directory" error.
     csv = Path(args.csv)
-    if not args.skip_load and not csv.is_file():
+    have_csv = csv.is_file()
+    if not args.skip_load and not have_csv:
         fail(f"expected the dataset at {csv} (download it from Kaggle, or pass --skip-load)")
 
     # dbt is invoked as `uv run dbt`, which syncs the environment from uv.lock
@@ -106,10 +109,17 @@ def preflight(args: argparse.Namespace) -> None:
     # docker-compose.yml interpolates CSV_FILE to decide which file to bind-mount.
     # It must be absolute: Compose reads a source with no leading "./" or "/" as
     # a *named volume*, and Path() strips the "./" off a relative path.
-    os.environ["CSV_FILE"] = str(csv.resolve())
+    #
+    # NULL_MOUNT covers `--skip-load` on a machine without the dataset, which is
+    # the normal way to work on models. Pointing the mount at the missing path
+    # instead would have Compose create a root-owned *directory* there -- which
+    # needs sudo to remove, and makes the next real load fail with a confusing
+    # "is a directory". /dev/null always exists and is never read: the load path
+    # is unreachable without a real file, per the check above.
+    os.environ["CSV_FILE"] = str(csv.resolve()) if have_csv else NULL_MOUNT
     os.environ["DBT_PROFILES_DIR"] = str(ROOT)
 
-    print(f"dataset : {csv}")
+    print(f"dataset : {csv}" if have_csv else "dataset : none (--skip-load)")
 
 
 def start_db() -> None:
