@@ -160,12 +160,14 @@ on this data they name different hours (10:00 vs 22:00). Both are columns on
 the summary and both print in `sql/final_query.sql`. Drawdown leads, as the
 reading consistent with reinvestment. Don't collapse this back to one number.
 
-**Four vars parameterise the backtest**, all in `dbt_project.yml`:
-`trade_hour` (null = all 24), `initial_units`, `backtest_start_date`
-(2021-02-24, excluding the partial first day) and `backtest_end_date` (null =
-end of data). `run.py` plumbs `--trade-hour` through to `dbt build --vars`.
-Anything that filters or scales the backtest belongs here, not hard-coded in a
-model.
+**Five vars parameterise the backtest**, all in `dbt_project.yml`:
+`trade_hour` (null = all 24), `trade_day_of_week` (null = every day, else ISO
+1=Monday), `initial_units`, `backtest_start_date` (2021-02-24, excluding the
+partial first day) and `backtest_end_date` (null = end of data). `run.py`
+plumbs all but `initial_units` through to `dbt build --vars`, forwarding only
+the flags actually given so an unset one defers to the default instead of
+overriding it with null. Anything that filters or scales the backtest belongs
+here, not hard-coded in a model.
 
 **Test severities encode intent.** Source tests run at `warn` and describe the
 file as it arrives (known upstream defects, surfaced but not blocking). Staging

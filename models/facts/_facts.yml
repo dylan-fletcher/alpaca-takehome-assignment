@@ -62,9 +62,10 @@ models:
 
       - name: day_of_week
         description: >
-          ISO day of week, 1 = Monday through 7 = Sunday. Carried so the
-          analyst can restrict the analysis to particular days without a
-          model change, which the brief asks for.
+          ISO day of week, 1 = Monday through 7 = Sunday. Both a slicing key
+          for ad-hoc `group by`, and the column the `trade_day_of_week` var
+          filters on -- so "what about Mondays?" is a flag, not a model
+          change. The brief asks for exactly that repeatability.
         data_tests:
           - not_null
           - dbt_utils.accepted_range:

@@ -15,16 +15,20 @@ Usage:
   ./run.sh --skip-load             # iterate on dbt models without reloading
   ./run.sh --reload --load-only    # just load the data, skip dbt
   ./run.sh --trade-hour 15         # restrict the backtest to a single hour
+  ./run.sh --day-of-week 1         # ...to Mondays only
+  ./run.sh --start-date 2023-01-01 # ...to a narrower window
   ./run.sh --csv ./fixture.csv --reload    # run against a smaller fixture
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import time
+from datetime import date
 from pathlib import Path
 
 from db import connect, scalar, show, statements
@@ -55,6 +59,37 @@ def sh(*cmd: str) -> None:
         fail(f"`{' '.join(cmd)}` failed")
 
 
+def bounded_int(low: int, high: int, label: str):
+    """An argparse type that reports the accepted range, not a stack trace."""
+
+    def parse(raw: str) -> int:
+        try:
+            value = int(raw)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"{label} must be a whole number, not {raw!r}"
+            ) from None
+        if not low <= value <= high:
+            raise argparse.ArgumentTypeError(f"{label} must be {low}-{high}, not {value}")
+        return value
+
+    return parse
+
+
+def iso_date(raw: str) -> str:
+    """An argparse type for YYYY-MM-DD.
+
+    Worth catching here: a malformed date otherwise survives all the way into
+    the compiled SQL and surfaces ten minutes later as a Postgres cast error.
+    """
+    try:
+        return date.fromisoformat(raw).isoformat()
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected a date as YYYY-MM-DD, not {raw!r}"
+        ) from None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -74,8 +109,31 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="stop after the load; skip dbt build and the final query",
     )
-    parser.add_argument(
-        "--trade-hour", type=int, help="restrict the backtest to a single hour (0-23)"
+    # The brief asks for the analysis to be repeatable "for different hours and
+    # days of entering the market". Each of these maps to the dbt var of the
+    # same name; leaving one unset keeps the dbt_project.yml default.
+    window = parser.add_argument_group("backtest window")
+    window.add_argument(
+        "--trade-hour",
+        type=bounded_int(0, 23, "--trade-hour"),
+        help="restrict the backtest to one hour of the day (0-23, UTC)",
+    )
+    window.add_argument(
+        "--day-of-week",
+        type=bounded_int(1, 7, "--day-of-week"),
+        help="restrict the backtest to one weekday (1=Monday .. 7=Sunday)",
+    )
+    window.add_argument(
+        "--start-date",
+        type=iso_date,
+        metavar="YYYY-MM-DD",
+        help="first date to trade, inclusive",
+    )
+    window.add_argument(
+        "--end-date",
+        type=iso_date,
+        metavar="YYYY-MM-DD",
+        help="last date to trade, inclusive",
     )
     parser.add_argument(
         "--csv",
@@ -171,9 +229,22 @@ def load_data(args: argparse.Namespace, conn) -> None:
 def build_models(args: argparse.Namespace) -> None:
     log("3/4  Building dbt models")
     cmd = [*UV_RUN, "dbt", "build"]
-    if args.trade_hour is not None:
-        cmd += ["--vars", f"{{trade_hour: {args.trade_hour}}}"]
-        print(f"restricting the backtest to hour {args.trade_hour}")
+
+    # Only the flags actually given are forwarded. Passing an unset one as null
+    # would override the dbt_project.yml default rather than defer to it.
+    overrides = {
+        "trade_hour": args.trade_hour,
+        "trade_day_of_week": args.day_of_week,
+        "backtest_start_date": args.start_date,
+        "backtest_end_date": args.end_date,
+    }
+    given = {name: value for name, value in overrides.items() if value is not None}
+    if given:
+        # JSON is valid YAML, so dbt takes this as-is and no quoting rules of
+        # our own are needed around dates.
+        cmd += ["--vars", json.dumps(given)]
+        for name, value in given.items():
+            print(f"  {name}: {value}")
     sh(*cmd)
 
 

@@ -28,15 +28,21 @@ tradeable_hours as (
     from hourly_prices
     where open_price is not null
         and close_price is not null
-        and hour_start_at >= '{{ var("backtest_start_date") }}'
-        -- Both filters are jinja-conditional so the default build stays a
-        -- plain scan. Note sqlfluff's `var()` stub is never none, so it lints
-        -- these branches as if they were always emitted -- hence the indent.
+        and hour_start_at::date >= date '{{ var("backtest_start_date") }}'
+        -- The remaining filters are jinja-conditional, so the default build
+        -- stays a plain scan and the analyst can slice the backtest by hour,
+        -- weekday or date range without editing a model. Note sqlfluff's
+        -- `var()` stub is never none, so it lints these branches as if they
+        -- were always emitted -- hence the indent.
         {%- if var("backtest_end_date") is not none %}
             and hour_start_at::date <= date '{{ var("backtest_end_date") }}'
         {%- endif %}
         {%- if var("trade_hour") is not none %}
             and extract(hour from hour_start_at) = {{ var("trade_hour") }}
+        {%- endif %}
+        {%- if var("trade_day_of_week") is not none %}
+            and extract(isodow from hour_start_at)
+            = {{ var("trade_day_of_week") }}
         {%- endif %}
 
 ),
