@@ -114,6 +114,16 @@ models:
               worst_trade_pct <= avg_return_pct
               and avg_return_pct <= best_trade_pct
 
+      # A drawdown can never be shallower than the worst single trade: that
+      # trade either happened at a high-water mark, making the two equal, or
+      # below one, making the drawdown deeper. Catches a drawdown window that
+      # has lost its ordering or its partition -- both of which would still
+      # produce plausible-looking negative numbers.
+      - dbt_utils.expression_is_true:
+          name: fct_btcusdt_strategy_by_hour_drawdown_is_at_least_worst_trade
+          arguments:
+            expression: max_drawdown_pct <= worst_trade_pct + 0.000000001
+
     columns:
       - name: trade_hour
         description: Hour of the day, 0-23 (UTC). The primary key.
@@ -160,14 +170,36 @@ models:
         data_tests:
           - not_null
 
+      - name: max_drawdown_pct
+        description: >
+          **Question 2, primary reading.** The deepest peak-to-trough fall the
+          compounded stake ever took, as a negative percentage. The hour with
+          the *highest* value here -- the least-negative one -- has the lowest
+          maximum loss.
+
+          Path-dependent, unlike every other column here: it is measured
+          against the running high-water mark of the equity curve, so a run of
+          ordinary losing days compounds into a drawdown far deeper than any
+          one of them. This is the reading that matches the brief's
+          reinvestment clause -- the analyst is flat overnight, but their
+          *capital* still carries yesterday's loss into today's stake.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -100
+                max_value: 0
+                inclusive: true
+
       - name: worst_trade_pct
         description: >
-          **Question 2.** The largest single-trade loss this hour ever took,
-          as a negative percentage. The hour with the *highest* value here --
-          the least-negative one -- has the lowest maximum loss.
+          **Question 2, secondary reading.** The largest single-trade loss this
+          hour ever took, as a negative percentage.
 
-          Single-trade rather than peak-to-trough: the strategy holds nothing
-          overnight, so losses never accumulate across trades.
+          Answers "what was the worst day?" where `max_drawdown_pct` answers
+          "what was the worst stretch?". Both are defensible readings of
+          "maximum losses" and here they name different hours, so
+          `sql/final_query.sql` reports both rather than choosing silently.
         data_tests:
           - not_null
 

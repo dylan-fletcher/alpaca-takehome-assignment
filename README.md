@@ -72,7 +72,7 @@ sql/final_query.sql      the two answers, run as step 4
 models/staging/binance/  source definition, staging model, tests
 models/intermediate/     hourly rollup to the grain the backtest trades on
 models/facts/            the trade ledger and the per-hour ranking
-macros/product.sql       multiply a column across a group
+macros/product.sql       multiply a column across a group, and along a curve
 tests/                   singular tests spanning more than one model
 docker-compose.yml       Postgres 16
 ```
@@ -81,31 +81,37 @@ docker-compose.yml       Postgres 16
 
 ## Results
 
-Both questions resolve to the **same hour: 22:00 UTC**, over 1,281 trading days
-from 2021-02-24 to 2024-08-27.
+Over 1,281 trading days from 2021-02-24 to 2024-08-27:
 
 | | Answer | |
 |---|---|---|
 | **Q1** — biggest returns | **22:00 UTC** | +40.59% compounded |
-| **Q2** — lowest maximum loss | **22:00 UTC** | worst single trade −2.92% |
+| **Q2** — lowest maximum loss | **10:00 UTC** | max drawdown −9.03% |
 
-That one hour tops both rankings is a coincidence worth stating rather than a
-result the modelling forces — the two columns are computed independently, and
-nothing about a high total return implies a shallow worst trade. 21:00 is a
-close second on return (+40.13%) but its worst trade is −5.15%, nearly twice
-as deep.
+**Q2 depends on what "maximum losses" means, so both readings are reported.**
+The strategy closes every trade inside its own hour, but the analyst reinvests,
+so their *capital* compounds across days — a run of ordinary losing days digs a
+hole no single day explains. Measured that way (peak-to-trough drawdown of the
+equity curve) the answer is 10:00. Measured as the worst single day it is
+22:00, which also wins Q1. The two disagree because 22:00's losses cluster:
+its worst day is the shallowest of any hour (−2.92%) yet its drawdown is
+−14.10%, fourth-best.
+
+Drawdown is the primary answer, since it is the one that matches the brief's
+reinvestment clause. Worst-single-day is the right answer only if the analyst
+re-stakes a fixed amount each day.
 
 The full ranking prints on every `./run.sh`. The top and bottom of it:
 
-| Hour (UTC) | Trades | Total return | Worst trade | Win rate |
-|---|---|---|---|---|
-| 22:00 | 1281 | **+40.59%** | **−2.92%** | 51.3% |
-| 21:00 | 1281 | +40.13% | −5.15% | 54.5% |
-| 10:00 | 1281 | +30.28% | −3.57% | 51.3% |
-| … | | | | |
-| 01:00 | 1281 | −25.81% | −5.41% | 48.2% |
-| 19:00 | 1281 | −26.95% | −6.24% | 51.7% |
-| 03:00 | 1278 | −29.49% | −6.44% | 51.6% |
+| Hour (UTC) | Trades | Total return | Max drawdown | Worst day | Win rate |
+|---|---|---|---|---|---|
+| 22:00 | 1281 | **+40.59%** | −14.10% | **−2.92%** | 51.3% |
+| 21:00 | 1281 | +40.13% | −22.55% | −5.15% | 54.5% |
+| 10:00 | 1281 | +30.28% | **−9.03%** | −3.57% | 51.3% |
+| … | | | | | |
+| 01:00 | 1281 | −25.81% | −45.29% | −5.41% | 48.2% |
+| 19:00 | 1281 | −26.95% | −36.05% | −6.24% | 51.7% |
+| 03:00 | 1278 | −29.49% | −32.37% | −6.44% | 51.6% |
 
 **Read these as a description of the sample, not a forecast.** The spread from
 best to worst hour is 70 percentage points, but it is drawn from 24 candidates
@@ -364,17 +370,31 @@ one place, and `tests/assert_product_macro_is_exact.sql` pins it to a product
 anyone can check by eye (`2 * 3 * 4 = 24`). The round trip is accurate to about
 5e-16, which is why that test carries a tolerance rather than an equality.
 
-**"Maximum loss" is the worst single trade, not a drawdown.** The strategy
-enters at `:00:00` and exits at `:59:59` of the same hour, holding nothing
-overnight, so a trade's percentage loss is unaffected by every other trade.
-Losses never accumulate into a peak-to-trough curve, and `min(return_pct)` is
-the whole answer. A drawdown series would be the right measure for a strategy
-that stayed in the market between trades; this one does not.
+**"Maximum losses" is reported two ways, because the brief admits two.**
+`max_drawdown_pct` is the deepest peak-to-trough fall of the compounded stake;
+`worst_trade_pct` is the largest single-day loss. It is tempting to argue that
+only the second applies — the strategy holds nothing overnight, so one trade's
+loss cannot touch another's. That reasoning is wrong. Being flat overnight
+removes *market exposure*, not the carry-forward of accumulated losses: the
+brief has profits fully reinvested, so yesterday's loss shrinks today's stake
+and the account traces an equity curve with a real drawdown.
 
-Note the sort direction this implies. `worst_trade_pct` is negative, so the
-*lowest maximum loss* is the **greatest** value — `order by worst_trade_pct
-desc`. Sorting it the intuitive way returns precisely the wrong hour and looks
-entirely plausible doing it, which is why `sql/final_query.sql` says so inline.
+The distinction is not academic here — the two readings name different hours.
+22:00 has the shallowest worst day of any hour (−2.92%) but only the
+fourth-shallowest drawdown (−14.10%), because its losing days cluster. 10:00
+has a *deeper* worst day (−3.57%) and a much shallower drawdown (−9.03%), its
+losses being more scattered. Drawdown leads, as the reading consistent with
+reinvestment; both are printed so the choice is visible rather than silent.
+
+The drawdown is measured against a high-water mark seeded with the opening
+stake (`greatest(peak, 1)`). Without that seed, an hour that loses money before
+ever printing a new high measures its fall from the dip instead of from par —
+hour 04 reads −13.59% that way against a true −14.02%.
+
+Note the sort direction all of this implies. Both columns are negative, so the
+*lowest maximum loss* is the **greatest** value — `order by ... desc`. Sorting
+either the intuitive way returns precisely the wrong hour and looks entirely
+plausible doing it, which is why `sql/final_query.sql` says so inline.
 
 **2021-02-23 is excluded from the backtest.** The file begins at 09:20:20 that
 day, so hours 10–23 could trade it and hours 00–09 could not. Left in, the
