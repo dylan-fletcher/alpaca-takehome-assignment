@@ -1,30 +1,27 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Always run through `uv`
 
-This project has no activated virtualenv and nothing on PATH. **Every Python or
-dbt command must go through `uv run`**, which syncs the environment from
-`uv.lock` before executing:
+There is no activated virtualenv and nothing on PATH. **Every Python or dbt
+command goes through `uv run`**, which syncs from `uv.lock` before executing:
 
 ```bash
 uv run -- dbt build
 uv run -- python run.py --help
 ```
 
-Use the `--` separator. Without it `uv run` will try to claim flags like
-`--reload` for itself instead of passing them to the script.
+Use the `--` separator, or `uv run` claims flags like `--reload` for itself.
 
 Do **not** invoke `.venv/bin/python`, `.venv/bin/dbt`, or a bare `dbt`/`python`.
-A `.venv/` directory exists as a uv implementation detail; targeting it directly
-bypasses dependency syncing and will drift. `run.py` shells out to dbt as
-`["uv", "run", "--", "dbt", ...]` for the same reason — keep it that way.
+`.venv/` is a uv implementation detail; targeting it bypasses dependency syncing
+and drifts. `run.py` shells out as `["uv", "run", "--", "dbt", ...]` for the
+same reason -- keep it that way.
 
-Managing dependencies: use `uv add <package>` (`uv add --dev <package>` for
-dev-only, `uv remove <package>` to drop one). It updates `pyproject.toml` and
-`uv.lock` together in one step. Do not hand-edit `pyproject.toml`, and do not
-`pip install`.
+Dependencies: `uv add <package>` (`--dev` for dev-only, `uv remove` to drop).
+It updates `pyproject.toml` and `uv.lock` together. Do not hand-edit
+`pyproject.toml`, and do not `pip install`.
 
 ## Commands
 
@@ -33,6 +30,7 @@ dev-only, `uv remove <package>` to drop one). It updates `pyproject.toml` and
 ./run.sh --csv ./fixture.csv --reload # fast loop against a small sample (~1s vs ~10min)
 ./run.sh --skip-load                  # iterate on models, leave the data alone
 ./run.sh --load-only                  # load and stop
+./run.sh --trade-hour 22 --day-of-week 1 --start-date 2023-01-01   # slice the backtest
 ./run.sh --help
 
 ./query.sh "select count(*) from raw.btc_1s"   # scratch query, prints a table
@@ -45,144 +43,103 @@ uv run -- dbt test  --select source:binance                 # source tests only
 uv run -- dbt parse                                         # validate YAML without touching the DB
 uv run -- dbt deps                                          # after editing packages.yml
 
-uv run -- pytest                            # Python tests (tests/python/)
-uv run -- python scripts/make_charts.py     # redraw docs/ranking-*.png
-uv run -- python scripts/lint_sql.py         # lint every .sql file
-uv run -- python scripts/lint_sql.py x.sql   # lint one
+uv run -- pytest                             # Python tests (tests/python/)
+uv run -- python scripts/make_charts.py      # redraw docs/ranking-*.png
+uv run -- python scripts/lint_sql.py         # lint every .sql file (add a path for one)
 uv run -- python scripts/lint_sql.py --staged # lint what is staged for commit
 uv run -- sqlfluff fix .                     # auto-fix what is safely fixable
 ```
 
-`./run.sh` and `./query.sh` are deliberately thin bash shims that locate `uv`
-and exec the matching `.py`. Put logic in the Python, not the shim.
+`./run.sh` and `./query.sh` are thin bash shims that locate `uv` and exec the
+matching `.py`. Put logic in the Python, not the shim.
 
-A full load takes ~10 minutes for 110.7M rows, and only happens once --
-`run.py` skips it when the table is already populated. Generate a fixture with
-`head -n 200001 half2_BTCUSDT_1s.csv > fixture.csv` and use `--csv` while
-iterating. Note `*.csv` is gitignored, so the dataset and fixture are never
-committed.
+A full load takes ~10 minutes for 110.7M rows and only happens once -- `run.py`
+skips it when the table is populated. For a fixture:
+`head -n 200001 half2_BTCUSDT_1s.csv > fixture.csv`. `*.csv` is gitignored, so
+neither the dataset nor the fixture is ever committed.
 
-Requires Docker running with WSL integration enabled (Docker Desktop →
-Resources → WSL Integration). Without it, `docker` resolves to a Windows `.exe`
-shim that errors with "could not be found in this WSL 2 distro".
-
-## Pull requests
-
-This repo is on GitHub (`origin`, `dylan-fletcher/alpaca-takehome-assignment`)
-and uses the `gh` CLI. The default branch is `master`; work lands on `feat/*`
-branches and merges back through a PR — never commit to `master` directly.
-
-```bash
-git switch -c feat/<topic>
-git add -A && git commit -m "..."
-git push -u origin HEAD          # -u on the first push, so later pushes are bare
-
-gh pr create --base master --title "..." --body-file <path>
-gh pr create --base master --fill   # reuse the commit subject/body instead
-```
-
-Once it exists:
-
-```bash
-gh pr view --web     # open in a browser
-gh pr diff           # review the diff locally
-gh pr status         # where the current branch's PR stands
-gh pr checks         # CI results
-```
-
-Merging: **always squash and merge, and always delete the branch afterwards.**
-
-```bash
-gh pr merge <number> --squash --delete-branch
-git switch master && git pull    # pick up the squashed commit locally
-```
-
-Squash keeps `master` at one commit per change, so its history reads as a list
-of shipped units rather than the work-in-progress steps taken to get there —
-those stay visible in the PR itself, which is where they are useful. The default
-squash message is the PR title and body; override with `--subject`/`--body`.
-
-`--delete-branch` removes the remote branch and the local one, so merged feature
-branches never accumulate. Do this as part of the merge, not as a follow-up
-someone has to remember.
-
-Notes:
-
-- **Always pass `--title`/`--body-file` or `--fill`.** A bare `gh pr create`
-  prompts interactively, and interactive prompts do not work in this
-  environment — the command will appear to hang.
-- **Prefer `--body-file` over `--body`** for anything longer than a sentence.
-  PR bodies here contain backticks, code fences and newlines, all of which get
-  mangled by shell quoting when passed inline.
-- `gh` is already authenticated. If a call 401s, check `gh auth status` before
-  assuming the command is wrong.
-- Verify what a commit will actually contain first. The dataset (`*.csv`),
-  `target/`, `logs/`, `dbt_packages/` and `.user.yml` are all gitignored and
-  must stay that way; `package-lock.yml` and `uv.lock` are tracked on purpose.
+Requires Docker with WSL integration enabled (Docker Desktop -> Resources -> WSL
+Integration). Without it `docker` resolves to a Windows `.exe` shim that errors
+with "could not be found in this WSL 2 distro".
 
 ## Architecture
 
-Data flows CSV → `raw` → `staging` → `intermediate` → `facts`, with dbt owning
-everything from `staging` onward.
+Data flows CSV -> `raw` -> `staging` -> `intermediate` -> `facts`, with dbt
+owning everything from `staging` onward.
 
-**`run.py` orchestrates; `sql/load.sql` and dbt do the work.** `run.py` starts
-Postgres via Docker Compose, executes the load, invokes `dbt build`, then runs
-`sql/final_query.sql`. It is the only place that knows the step order.
+**`run.py` orchestrates; `sql/load.sql` and dbt do the work.** It starts
+Postgres, executes the load, invokes `dbt build`, runs `sql/final_query.sql`,
+then redraws the charts. It is the only place that knows the step order.
 
 **The COPY is server-side.** `docker-compose.yml` bind-mounts the CSV to
-`/data/dataset.csv` inside the container so the Postgres backend reads the file
-directly. 13.6 GB never crosses the client connection. This is why the load is
-minutes rather than hours — do not replace it with a client-side `copy_from`.
+`/data/dataset.csv` so the Postgres backend reads it directly; 13.6 GB never
+crosses the client connection. Do not replace it with a client-side `copy_from`.
 
 **`db.py` is shared by `run.py` and `query.py`**: connection handling (mirroring
-`profiles.yml`, honouring `PG*` env vars), plus `statements()`, which splits a
-psql-style script into psycopg2-executable statements. `statements()` strips
-backslash meta-commands and expands `:'var'` placeholders, which is what keeps
-`sql/load.sql` runnable *both* through `run.py` and via
-`psql -f /sql/load.sql` inside the container. Preserve that dual-compatibility.
+`profiles.yml`, honouring `PG*` env vars) plus `statements()`, which splits a
+psql-style script into psycopg2-executable statements. It strips backslash
+meta-commands and expands `:'var'` placeholders, which keeps `sql/load.sql`
+runnable *both* through `run.py` and via `psql -f /sql/load.sql` inside the
+container. Preserve that dual-compatibility -- `tests/python/test_db.py` pins it.
 
-**`raw` is a faithful mirror; `staging` is where cleaning happens.**
-`raw.btc_1s` is a byte-for-byte transcription of the CSV, rebuilt by
-`DROP TABLE ... CASCADE` + `COPY` on every `--reload`. It is a logged table on
-a persistent volume, so the load survives restarts and `run.py` skips it when
-rows are already present. Data defects are corrected in the staging model,
-never in the load.
+**`raw` is a faithful mirror; `staging` is where cleaning happens.** `raw.btc_1s`
+is a byte-for-byte transcription, rebuilt by `DROP TABLE ... CASCADE` + `COPY`
+on `--reload`. Data defects are corrected in the staging model, never the load.
 
 **The fact layer answers the questions; the intermediate model feeds it.**
-`fct_btcusdt_hourly_trades` is the per-trade ledger (one row per tradeable
-hour, with `gross_return` as a multiplier), and `fct_btcusdt_strategy_by_hour`
-aggregates it to 24 rows. Compounding uses the `product()` macro rather than a
-raw `exp(sum(ln(...)))`, and the drawdown's running product uses
-`running_product()` -- keep it that way, and keep the reasoning in the macros
-rather than duplicated at each call site.
+`fct_btcusdt_hourly_trades` is the per-trade ledger, `fct_btcusdt_strategy_by_hour`
+aggregates it to 24 rows. Compounding uses the `product()` macro and the
+drawdown's equity curve uses `running_product()`, never a raw
+`exp(sum(ln(...)))` -- keep the reasoning in the macros, not at each call site.
 
 **Q2 has two answers on purpose.** "Maximum losses" reads either as the deepest
 peak-to-trough drawdown of the compounded stake or as the worst single day, and
-on this data they name different hours (10:00 vs 22:00). Both are columns on
-the summary and both print in `sql/final_query.sql`. Drawdown leads, as the
-reading consistent with reinvestment. Don't collapse this back to one number.
+on this data they name different hours (10:00 vs 22:00). Both are columns on the
+summary and both print in `sql/final_query.sql`. Drawdown leads, as the reading
+consistent with reinvestment. Don't collapse this back to one number.
 
-**Five vars parameterise the backtest**, all in `dbt_project.yml`:
-`trade_hour` (null = all 24), `trade_day_of_week` (null = every day, else ISO
-1=Monday), `initial_units`, `backtest_start_date` (2021-02-24, excluding the
-partial first day) and `backtest_end_date` (null = end of data). `run.py`
+**Five vars parameterise the backtest**, all in `dbt_project.yml`: `trade_hour`,
+`trade_day_of_week` (ISO, 1=Monday), `initial_units`, `backtest_start_date`
+(2021-02-24, excluding the partial first day) and `backtest_end_date`. `run.py`
 plumbs all but `initial_units` through to `dbt build --vars`, forwarding only
-the flags actually given so an unset one defers to the default instead of
+the flags actually given so an unset one defers to the default rather than
 overriding it with null. Anything that filters or scales the backtest belongs
 here, not hard-coded in a model.
-
-**Test severities encode intent.** Source tests run at `warn` and describe the
-file as it arrives (known upstream defects, surfaced but not blocking). Staging
-tests run at `error` and assert things we are willing to fail a build on. If you
-add a test, decide which of those two it is.
 
 See `README.md` for the data-quality findings and the reasoning behind each
 modelling decision.
 
+## Pull requests
+
+`origin` is `dylan-fletcher/alpaca-takehome-assignment`. The default branch is
+`master`; work lands on `feat/*` branches through a PR -- never commit to
+`master` directly. **Always squash and merge, and always delete the branch.**
+
+```bash
+git switch -c feat/<topic>
+git add -A && git commit -m "..."
+git push -u origin HEAD
+
+gh pr create --base master --title "..." --body-file <path>
+gh pr checks                     # CI results
+gh pr merge <number> --squash --delete-branch
+git switch master && git pull
+```
+
+- **Always pass `--title`/`--body-file` or `--fill`.** A bare `gh pr create`
+  prompts interactively, and interactive prompts hang in this environment.
+- **Prefer `--body-file` over `--body`.** PR bodies here contain backticks and
+  code fences, which shell quoting mangles.
+- `gh` is already authenticated. If a call 401s, check `gh auth status` first.
+- **Verify what a commit will contain before making it.** `git add -A` has
+  picked up stray files here before. The dataset (`*.csv`), `target/`, `logs/`,
+  `dbt_packages/`, `.user.yml` and `*:Zone.Identifier` are gitignored and must
+  stay that way; `package-lock.yml` and `uv.lock` are tracked on purpose.
+
 ## SQL style
 
 Enforced by SQLFluff (`.sqlfluff`) plus one local rule in `scripts/sql_style.py`.
-Three layers run it, all calling the same `scripts/lint_sql.py`:
+Three layers call the same `scripts/lint_sql.py`:
 
 | Layer | Fires on | Config |
 |---|---|---|
@@ -190,90 +147,64 @@ Three layers run it, all calling the same `scripts/lint_sql.py`:
 | `PreToolUse` hook | Claude running `git commit` (lints staged SQL) | `.claude/settings.json` |
 | GitHub Actions | every push to `master` and every PR | `.github/workflows/ci.yml` |
 
-CI also runs `pytest` (the Python half: `db.statements()` and the `run.py`
-validators) and `dbt parse`. It cannot run `dbt build` -- that needs the 13.6 GB
-dataset, which is gitignored.
-
-The hooks are a fast feedback loop, not enforcement: they only see Claude's
-actions, and the `PostToolUse` one is blind to edits made through Bash rather
-than the Edit tool. **CI is the only layer that actually gates anything.**
-There is deliberately no `.git/hooks` pre-commit -- a single-maintainer repo
-does not need one, and it would not be version-controlled anyway.
+The hooks are a fast feedback loop, not enforcement -- they only see Claude's
+actions, and `PostToolUse` is blind to edits made through Bash. **CI is the only
+layer that gates anything.** It also runs `pytest` and `dbt parse`; it cannot
+run `dbt build`, which needs the gitignored 13.6 GB dataset.
 
 The conventions:
 
 - **Lower case keywords**, 80-character lines, trailing commas.
-- **Import CTEs at the top.** Each one is `select * from {{ source(...) }}` or
-  `{{ ref(...) }}` and nothing else. Real work happens in later CTEs, so the
-  dependencies of a model are readable from its first few lines.
+- **Import CTEs at the top**, each just `select * from {{ source(...) }}` or
+  `{{ ref(...) }}`, so a model's dependencies are readable from its first lines.
 - **Keywords start their line.** `select`, `from`, `where` are never trailed by
   the first target.
 - **A select list is one contiguous block.** Group it with `---------- banner`
-  comments, not blank lines. This is the `SQ01` rule in `sql_style.py`;
-  SQLFluff collapses two blank lines into one but has no setting to forbid
-  them, and this is the sort of claim that rots if left as prose.
-- **Aliases align.** `spacing_before = align` keeps the `as` keywords in a
-  column so a rename block reads as a mapping.
+  comments, not blank lines -- the `SQ01` rule in `scripts/sql_style.py`, which exists
+  because SQLFluff has no setting to forbid them.
+- **Aliases align**, so a rename block reads as a mapping.
 - **Comments earn their length.** Say why, in a few lines. Numbers and full
-  workings go in `README.md`, which is where someone goes looking for them.
+  workings go in `README.md`.
 
-`sqlfluff fix` handles most of this. It cannot fix `SQ01`, long lines, or a
-comment that is too long, which are the ones worth thinking about anyway.
-
-Two deliberate exemptions, both in `.sqlfluff` with the reasoning inline:
-`AM04`/`ST06` are warnings because `select *` is correct in an import CTE, and
-`RF04` ignores `open`, `close` and `ignore` because `raw` mirrors the CSV
-verbatim.
+`sqlfluff fix` handles most of this. It cannot fix `SQ01`, long lines, or an
+over-long comment -- the ones worth thinking about anyway.
 
 ## Testing and data assumptions
 
 **Every assumption about the data must be expressed as a test, not as prose.** A
-sentence in a YAML `description:` is unverified by definition — it reads as
+sentence in a YAML `description:` is unverified by definition -- it reads as
 authoritative, is never executed, and silently rots. If you catch yourself
-writing "always", "never", or "exactly" about this dataset, that claim belongs
-in `data_tests:`, where it either passes or fails on the next build.
+writing "always", "never" or "exactly" about this dataset, that claim belongs in
+`data_tests:`, where it passes or fails on the next build.
 
-Rules that follow:
-
-- **Validate against the full table, never the fixture.** `fixture.csv` exists
-  to make iteration fast, not to establish facts. The anomalies here are rare —
-  4 truncated bars and 56 duplicated timestamps out of 110M rows — and a sample
-  will miss them.
-- **Characterise before handling.** When a test fails, establish how many rows,
-  what the pattern is, and what it does to downstream numbers *before* deciding
-  what to do. The duplicates turned out to be byte-identical and clustered into
-  seven seams, which is what made deduplication obviously safe. None of that was
-  knowable from the failure count alone.
-- **Choose severity deliberately.** `warn` for a known property of the source
-  that has been characterised and accepted; `error` for something that must
-  hold. A test that is neither is noise.
+- **Validate against the full table, never the fixture.** The anomalies are rare
+  -- 4 truncated bars and 56 duplicated timestamps out of 110M rows -- and a
+  sample will miss them.
+- **Characterise before handling.** Establish how many rows, what the pattern
+  is, and what it does to downstream numbers *before* deciding what to do. The
+  duplicates turned out byte-identical and clustered into seven seams, which is
+  what made deduplication obviously safe; none of that was knowable from the
+  failure count.
+- **Choose severity deliberately.** `warn` for a known, characterised property
+  of the source; `error` for something that must hold. A test that is neither is
+  noise.
 - **Prefer the test that reports the actionable number.** `sequential_values`
-  reports 7 outage windows rather than 59,700 missing seconds — the same fact,
-  but one of them tells you what to go look at.
+  reports 7 outage windows rather than 59,700 missing seconds.
 - **Mind the cost.** Each test is a full pass over 110M rows (30-75s). Combine
-  related assertions into one `expression_is_true` rather than adding six tests
-  that all fail for the same reason.
+  related assertions into one `expression_is_true` rather than six that fail for
+  the same reason.
 - **Record it in `README.md`** whenever a finding changes a modelling decision,
   with the numbers that justified it.
 
 ## Gotchas
 
-**Keep this section current — this is a standing instruction, not a suggestion.**
-If you hit an error while working in this repo that took real effort to diagnose
-and would plausibly bite the next person, add it here as part of the same change
-that resolves it. Don't wait to be asked, and don't leave it for a follow-up.
+**Keep this section current -- a standing instruction, not a suggestion.** If an
+error takes real effort to diagnose and would bite the next person, add it here
+as part of the same change that resolves it. One line on the symptom (what a
+future reader will search for), one on why it happens.
 
-What belongs here: non-obvious tool behaviour, silent misconfiguration, a
-surprising Postgres or dbt semantic, anything where the error message points
-somewhere other than the actual cause. Write one line on the symptom and one on
-why it happens — the symptom is what a future reader will search for.
-
-What does not: one-off typos, or anything the error message already explains
-plainly. This list is only useful while every entry earns its place.
-
-The same applies to the rest of the file. If you change a command, a flag, or
-how the pipeline is wired, update the section that describes it in the same
-commit, so this file never drifts from the code.
+Not for one-off typos or anything the error message already explains plainly.
+The list is only useful while every entry earns its place.
 
 Each entry below is a failure already paid for once:
 
