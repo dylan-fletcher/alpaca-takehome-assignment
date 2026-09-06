@@ -101,6 +101,16 @@ Drawdown is the primary answer, since it is the one that matches the brief's
 reinvestment clause. Worst-single-day is the right answer only if the analyst
 re-stakes a fixed amount each day.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/ranking-dark.png">
+  <img alt="Total return and maximum drawdown by hour of day" src="docs/ranking-light.png">
+</picture>
+
+Both panels share one hour axis rather than being sorted by their own metric,
+which is what makes the disagreement visible: 22:00 has the longest blue bar on
+the left and a middling one on the right. `./run.sh` regenerates these, so they
+cannot drift from the numbers below.
+
 The full ranking prints on every `./run.sh`. The top and bottom of it:
 
 | Hour (UTC) | Trades | Total return | Max drawdown | Worst day | Win rate |
