@@ -22,3 +22,21 @@
 {% macro product(column) -%}
     exp(sum(ln({{ column }})))
 {%- endmacro %}
+
+
+{#-
+    The same identity as a window, giving the running product up to each row.
+
+    `product()` answers "what did this hour return overall"; this answers "what
+    was the stake worth after each trade along the way". That curve is what a
+    drawdown is measured against, and unlike every other number in the summary
+    it depends on the order the trades happened in.
+
+    Verified alongside `product` in `tests/assert_product_macro_is_exact`.
+-#}
+
+{% macro running_product(column, partition_by, order_by) -%}
+    exp(sum(ln({{ column }})) over (
+        partition by {{ partition_by }} order by {{ order_by }}
+    ))
+{%- endmacro %}

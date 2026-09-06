@@ -28,17 +28,39 @@ limit 1;
 
 -- Question 2: which hour of the day had the lowest maximum losses?
 --
--- `worst_trade_pct` is each hour's largest single-trade loss, so it is
--- negative. "Lowest maximum loss" is therefore the *greatest* value -- the
--- one closest to zero -- which is why this sorts descending. Sorting it the
--- intuitive way returns exactly the wrong hour, and returns it silently.
+-- "Maximum losses" has two defensible readings, and on this data they name
+-- different hours, so both are reported rather than one chosen silently:
+--
+--   a) the deepest peak-to-trough fall of the compounded stake (drawdown)
+--   b) the largest loss on any single day
+--
+-- (a) is the primary answer. The brief has the analyst reinvesting, so their
+-- capital compounds across days even though each trade closes inside its own
+-- hour -- a run of ordinary losing days digs a hole no single day explains.
+-- (b) is the right answer only if the analyst re-stakes a fixed amount daily.
+--
+-- Both columns are negative, so "lowest maximum loss" is the *greatest*
+-- value -- the one closest to zero -- which is why these sort descending.
+-- Sorting them the intuitive way returns exactly the wrong hour, silently.
 select
-    'Q2: lowest maximum loss'            as question,  -- noqa: ST06
+    'Q2a: lowest max drawdown'           as question,  -- noqa: ST06
+    to_char(trade_hour, 'FM00') || ':00' as hour_utc,
+    trade_count,
+    round(max_drawdown_pct, 2)           as max_drawdown_pct,
+    round(worst_trade_pct, 2)            as worst_trade_pct,
+    round(total_return_pct, 2)           as total_return_pct
+from analytics_facts.fct_btcusdt_strategy_by_hour
+order by max_drawdown_pct desc
+limit 1;
+
+
+select
+    'Q2b: shallowest single-day loss'    as question,  -- noqa: ST06
     to_char(trade_hour, 'FM00') || ':00' as hour_utc,
     trade_count,
     round(worst_trade_pct, 2)            as worst_trade_pct,
-    round(best_trade_pct, 2)             as best_trade_pct,
-    round(stddev_return_pct, 3)          as stddev_return_pct
+    round(max_drawdown_pct, 2)           as max_drawdown_pct,
+    round(total_return_pct, 2)           as total_return_pct
 from analytics_facts.fct_btcusdt_strategy_by_hour
 order by worst_trade_pct desc
 limit 1;
@@ -51,6 +73,7 @@ select
     trade_count,
     round(total_return_pct, 2)           as total_return_pct,
     round(avg_return_pct, 4)             as avg_return_pct,
+    round(max_drawdown_pct, 2)           as max_drawdown_pct,
     round(worst_trade_pct, 2)            as worst_trade_pct,
     round(best_trade_pct, 2)             as best_trade_pct,
     round(win_rate_pct, 1)               as win_rate_pct

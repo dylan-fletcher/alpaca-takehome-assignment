@@ -150,8 +150,15 @@ never in the load.
 `fct_btcusdt_hourly_trades` is the per-trade ledger (one row per tradeable
 hour, with `gross_return` as a multiplier), and `fct_btcusdt_strategy_by_hour`
 aggregates it to 24 rows. Compounding uses the `product()` macro rather than a
-raw `exp(sum(ln(...)))` -- keep it that way, and keep the reasoning in the
-macro rather than duplicated at each call site.
+raw `exp(sum(ln(...)))`, and the drawdown's running product uses
+`running_product()` -- keep it that way, and keep the reasoning in the macros
+rather than duplicated at each call site.
+
+**Q2 has two answers on purpose.** "Maximum losses" reads either as the deepest
+peak-to-trough drawdown of the compounded stake or as the worst single day, and
+on this data they name different hours (10:00 vs 22:00). Both are columns on
+the summary and both print in `sql/final_query.sql`. Drawdown leads, as the
+reading consistent with reinvestment. Don't collapse this back to one number.
 
 **Four vars parameterise the backtest**, all in `dbt_project.yml`:
 `trade_hour` (null = all 24), `initial_units`, `backtest_start_date`
