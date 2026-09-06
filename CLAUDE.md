@@ -30,7 +30,7 @@ dev-only, `uv remove <package>` to drop one). It updates `pyproject.toml` and
 
 ```bash
 ./run.sh                              # full pipeline: db -> load -> dbt build -> final query
-./run.sh --csv ./fixture.csv --reload # fast loop against a small sample (~1s vs ~7min)
+./run.sh --csv ./fixture.csv --reload # fast loop against a small sample (~1s vs ~10min)
 ./run.sh --skip-load                  # iterate on models, leave the data alone
 ./run.sh --load-only                  # load and stop
 ./run.sh --help
@@ -45,6 +45,7 @@ uv run -- dbt test  --select source:binance                 # source tests only
 uv run -- dbt parse                                         # validate YAML without touching the DB
 uv run -- dbt deps                                          # after editing packages.yml
 
+uv run -- pytest                            # Python tests (tests/python/)
 uv run -- python scripts/make_charts.py     # redraw docs/ranking-*.png
 uv run -- python scripts/lint_sql.py         # lint every .sql file
 uv run -- python scripts/lint_sql.py x.sql   # lint one
@@ -188,6 +189,10 @@ Three layers run it, all calling the same `scripts/lint_sql.py`:
 | `PostToolUse` hook | Claude's Write/Edit of a `.sql` file | `.claude/settings.json` |
 | `PreToolUse` hook | Claude running `git commit` (lints staged SQL) | `.claude/settings.json` |
 | GitHub Actions | every push to `master` and every PR | `.github/workflows/ci.yml` |
+
+CI also runs `pytest` (the Python half: `db.statements()` and the `run.py`
+validators) and `dbt parse`. It cannot run `dbt build` -- that needs the 13.6 GB
+dataset, which is gitignored.
 
 The hooks are a fast feedback loop, not enforcement: they only see Claude's
 actions, and the `PostToolUse` one is blind to edits made through Bash rather
