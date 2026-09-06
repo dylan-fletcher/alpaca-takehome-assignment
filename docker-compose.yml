@@ -15,7 +15,10 @@ services:
       # The dataset is assumed to sit in the repo root at run time (per the
       # assignment brief) and is never committed. Mounted read-only so the
       # Postgres backend can COPY from it directly.
-      # CSV_FILE lets run.sh point the load at a smaller fixture for testing.
+      # CSV_FILE lets run.sh point the load at a smaller fixture for testing,
+      # and at /dev/null when there is no dataset to mount at all. A source
+      # that does not exist is worse than useless here: Compose would create a
+      # root-owned directory at that path rather than failing.
       - ${CSV_FILE:-./half2_BTCUSDT_1s.csv}:/data/dataset.csv:ro
       - ./sql:/sql:ro
     healthcheck:

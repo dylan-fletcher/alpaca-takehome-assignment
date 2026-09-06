@@ -274,9 +274,16 @@ Each entry below is a failure already paid for once:
   shows a spinner while GitHub re-runs its test-merge; querying it is what
   nudges the job along. Poll until it reports `MERGEABLE / CLEAN` rather than
   hunting for branch protection or failing checks.
-- **`CSV_FILE` must be an absolute path.** Compose reads a mount source with no
-  leading `./` or `/` as a *named volume*, and `Path()` strips `./`. `run.py`
-  calls `.resolve()` for this reason.
+- **`CSV_FILE` must be an absolute path, and must exist.** Compose reads a
+  mount source with no leading `./` or `/` as a *named volume*, so `run.py`
+  calls `.resolve()`. A source that does not exist is worse: Compose creates a
+  root-owned *directory* there, which needs sudo to remove and makes the next
+  load fail with "is a directory". `run.py` mounts `/dev/null` instead when
+  there is no dataset, which is the normal state under `--skip-load`.
+- **Never move the dataset to test the load path.** `/tmp` is a 3.9 GB tmpfs;
+  a `mv` of the 13.6 GB CSV onto it silently truncates the file at the ENOSPC
+  boundary. Point `--csv` at a throwaway path instead -- that is what the flag
+  is for.
 - **`to_regclass` cannot guard a table reference in the same statement.**
   Postgres resolves table names at parse time, so
   `CASE WHEN to_regclass(...) IS NULL THEN 0 ELSE (SELECT count(*) FROM t) END`
