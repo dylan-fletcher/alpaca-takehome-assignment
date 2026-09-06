@@ -42,6 +42,7 @@ CSV_IN_CONTAINER = "/data/dataset.csv"
 NULL_MOUNT = "/dev/null"
 LOAD_SQL = ROOT / "sql" / "load.sql"
 FINAL_SQL = ROOT / "sql" / "final_query.sql"
+CHART_SCRIPT = ROOT / "scripts" / "make_charts.py"
 
 
 def log(msg: str) -> None:
@@ -256,6 +257,12 @@ def final_query(conn) -> None:
         return
     for stmt in statements(FINAL_SQL.read_text()):
         show(conn, stmt)
+
+    # Regenerated here rather than left to a manual step, so the charts in
+    # README.md cannot drift from the numbers printed above. Output is
+    # byte-stable on unchanged data, so a re-run leaves git clean.
+    print()
+    sh(*UV_RUN, "python", str(CHART_SCRIPT))
 
 
 def main() -> None:

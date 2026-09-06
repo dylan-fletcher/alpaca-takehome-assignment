@@ -77,6 +77,13 @@ def scalar(conn, sql, params=None):
     return None if row is None else row[0]
 
 
+def fetch(conn, sql, params=None) -> list[tuple]:
+    """Run a query and return every row."""
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+
 def _cell(value):
     # tabulate's own float handling rounds to 6 significant figures, which would
     # quietly mangle prices and PnL. Pre-format numerics to their exact text.

@@ -45,6 +45,7 @@ uv run -- dbt test  --select source:binance                 # source tests only
 uv run -- dbt parse                                         # validate YAML without touching the DB
 uv run -- dbt deps                                          # after editing packages.yml
 
+uv run -- python scripts/make_charts.py     # redraw docs/ranking-*.png
 uv run -- python scripts/lint_sql.py         # lint every .sql file
 uv run -- python scripts/lint_sql.py x.sql   # lint one
 uv run -- python scripts/lint_sql.py --staged # lint what is staged for commit
