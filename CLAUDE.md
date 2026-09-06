@@ -160,8 +160,8 @@ The conventions:
 - **Keywords start their line.** `select`, `from`, `where` are never trailed by
   the first target.
 - **A select list is one contiguous block.** Group it with `---------- banner`
-  comments, not blank lines -- the `SQ01` rule in `scripts/sql_style.py`, which exists
-  because SQLFluff has no setting to forbid them.
+  comments, not blank lines -- the `SQ01` rule in `scripts/sql_style.py`,
+  which exists because SQLFluff has no setting to forbid them.
 - **Aliases align**, so a rename block reads as a mapping.
 - **Comments earn their length.** Say why, in a few lines. Numbers and full
   workings go in `README.md`.
@@ -237,7 +237,7 @@ Each entry below is a failure already paid for once:
   in `create table`. `ignore_words` is the only lever that works there.
 - **`FluffConfig.from_path()` walks up from the path you hand it**, not from the
   project. Give it a file outside the repo and it finds no `.sqlfluff` and dies
-  with "No dialect was specified". `sql_style.py` anchors it to the repo root.
+  with "No dialect was specified". `scripts/sql_style.py` anchors it to ROOT.
 - **`allow_implicit_indents` is deprecated** in favour of
   `implicit_indents = allow`. The old spelling still works but prints a
   paragraph of warning on every single lint, which buries real findings.
