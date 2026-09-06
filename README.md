@@ -120,12 +120,18 @@ points of a coin flip. Picking the best of 24 is a multiple-comparisons
 exercise; the winner is partly noise. `stddev_return_pct` is carried on the
 fact table for exactly this reason.
 
-To re-run for one hour, or over a different window:
+The brief asks for the analysis to be repeatable "for different hours and days
+of entering the market". Each slice is a flag, not a model change:
 
 ```bash
-./run.sh --skip-load --trade-hour 22
-uv run -- dbt build --vars '{backtest_start_date: "2023-01-01"}'
+./run.sh --skip-load --trade-hour 22                   # one hour of the day
+./run.sh --skip-load --day-of-week 1                   # Mondays only
+./run.sh --skip-load --start-date 2023-01-01 --end-date 2023-12-31
+./run.sh --skip-load --trade-hour 22 --day-of-week 1   # they compose
 ```
+
+Each maps to a dbt var of the same name, so the same slices are available to
+`dbt build --vars` directly. Unset flags keep the `dbt_project.yml` defaults.
 
 ---
 

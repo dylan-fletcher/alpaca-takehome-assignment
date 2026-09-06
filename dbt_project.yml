@@ -27,6 +27,7 @@ models:
 vars:
   # Overridable at run time:  dbt build --vars '{trade_hour: 15}'
   trade_hour: null          # null = evaluate all 24 hours
+  trade_day_of_week: null   # null = every day; else ISO 1=Monday .. 7=Sunday
   initial_units: 1
 
   # The backtest window. 2021-02-23 is deliberately excluded: the file starts
