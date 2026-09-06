@@ -1,7 +1,7 @@
 [project]
 name = "alpaca-takehome-assignment"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hourly BTCUSDT backtest over Binance 1-second data"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,6 +15,11 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+# Only the Python half. dbt's own tests live in tests/*.sql and are run by
+# `dbt build`, which pytest knows nothing about.
+testpaths = ["tests/python"]
 
 [dependency-groups]
 dev = [

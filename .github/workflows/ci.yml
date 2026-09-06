@@ -26,6 +26,11 @@ jobs:
       - name: SQL lint
         run: uv run -- python scripts/lint_sql.py
 
+      # The Python half: the psql-script splitter and the CLI validators.
+      # No database needed, so unlike `dbt build` this does run in CI.
+      - name: Python tests
+        run: uv run -- pytest -q
+
       # dbt_packages/ is gitignored, and the staging tests use dbt_utils, so
       # `dbt parse` fails without this: "found only 0 package(s) installed".
       - name: Install dbt packages

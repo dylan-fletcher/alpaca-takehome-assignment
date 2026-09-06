@@ -207,7 +207,7 @@ def load_data(args: argparse.Namespace, conn) -> None:
         )
         return
 
-    print(f"COPYing {args.csv} -- this takes 10-30 minutes for the full 13.6 GB file")
+    print(f"COPYing {args.csv} -- about 10 minutes for the full 13.6 GB file")
     start = time.monotonic()
     with conn.cursor() as cur:
         # The COPY reads the bind-mounted file from inside the container rather
