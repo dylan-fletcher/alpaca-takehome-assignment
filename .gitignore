@@ -16,6 +16,9 @@ logs/
 
 # dataset (not submitted per assignment instructions)
 *.csv
+# Windows alternate-data-stream marker, written next to anything downloaded
+# through a browser on WSL. Not matched by *.csv -- the suffix is after it.
+*:Zone.Identifier
 *.zip
 *.parquet
 data/
