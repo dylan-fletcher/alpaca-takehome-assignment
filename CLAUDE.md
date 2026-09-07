@@ -178,12 +178,12 @@ writing "always", "never" or "exactly" about this dataset, that claim belongs in
 `data_tests:`, where it passes or fails on the next build.
 
 - **Validate against the full table, never the fixture.** The anomalies are rare
-  -- 4 truncated bars and 56 duplicated timestamps out of 110M rows -- and a
-  sample will miss them.
+  -- 4 rows that end early and 56 duplicated timestamps out of 110M rows --
+  and a sample will miss them.
 - **Characterise before handling.** Establish how many rows, what the pattern
   is, and what it does to downstream numbers *before* deciding what to do. The
-  duplicates turned out byte-identical and clustered into seven seams, which is
-  what made deduplication obviously safe; none of that was knowable from the
+  duplicates turned out byte-identical and clustered into seven blocks, which
+  is what made deduplication obviously safe; none of that was knowable from the
   failure count.
 - **Choose severity deliberately.** `warn` for a known, characterised property
   of the source; `error` for something that must hold. A test that is neither is

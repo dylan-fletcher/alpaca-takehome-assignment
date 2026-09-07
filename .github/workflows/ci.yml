@@ -1,8 +1,8 @@
 # Everything here is the static half of the pipeline: style, and whether the
 # project compiles. The data half cannot run in CI -- the dataset is 13.6 GB and
-# gitignored, and a fixture small enough to commit would miss the 4 truncated
-# bars and 56 duplicate timestamps the dbt tests exist to catch. Those stay a
-# local `./run.sh` concern, on purpose.
+# gitignored, and a fixture small enough to commit would miss the 4 rows that
+# end early and 56 duplicate timestamps the dbt tests exist to catch. Those stay
+# a local `./run.sh` concern, on purpose.
 
 name: ci
 
